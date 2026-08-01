@@ -1,0 +1,15 @@
+# AudioCloning 依赖清单 (MLX 版)
+# 使用 conda env: agent (python>=3.13, Apple Silicon)
+
+mlx-audio-plus>=0.1.7
+mlx-lm>=0.31.0
+modelscope>=1.20.0
+gradio>=5.4.0
+soundfile>=0.12.1
+numpy>=1.26
+scipy>=1.11.0
+fastapi>=0.115.6
+uvicorn>=0.30.0
+python-multipart
+httpx>=0.27.0
+# ASR 功能依赖系统安装的 llama.cpp (llama-server)，非 pip 依赖
