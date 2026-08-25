@@ -1,0 +1,65 @@
+[project]
+name = "audioclone"
+version = "0.2.0"
+description = "音频模型体验工具箱 (MLX, Apple Silicon)"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+authors = [
+    { name = "AudioCloning" },
+]
+keywords = ["mlx", "tts", "asr", "voice-cloning", "cosyvoice", "gradio", "fastapi"]
+dependencies = [
+    "mlx-audio-plus>=0.1.7",
+    "mlx-lm>=0.18,<0.30",
+    "modelscope>=1.20.0",
+    "gradio>=5.4.0",
+    "soundfile>=0.12.1",
+    "numpy>=1.26",
+    "scipy>=1.11.0",
+    "fastapi>=0.115.6",
+    "uvicorn>=0.30.0",
+    "python-multipart",
+    "httpx>=0.27.0",
+]
+
+# ─── 命令行入口 (经 `uv run audioclone-webui` 等调用) ───────────
+[project.scripts]
+audioclone-webui = "audioclone.webui.app:main"
+audioclone-api = "audioclone.api.server:main"
+audioclone-download-tts = "audioclone.cli.downloads:download_tts_main"
+audioclone-download-asr = "audioclone.cli.downloads:download_asr_main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "httpx>=0.27.0",  # 已含于运行依赖，此处保留以显式声明
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/audioclone"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: 需要本地预训练模型/llama-server 的端到端集成测试",
+]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4"]
+# B027: 后端抽象基类中的"可选覆盖"空钩子（load/close/stop）属有意设计，忽略误报
+ignore = ["E501", "B008", "B027"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["audioclone"]

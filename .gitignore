@@ -12,6 +12,8 @@ __pycache__/
 dist/
 build/
 .eggs/
+.pytest_cache/
+.ruff_cache/
 
 # ─── 虚拟环境 ───────────────────────────────────────────────
 .venv/

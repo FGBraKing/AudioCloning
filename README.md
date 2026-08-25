@@ -1,7 +1,8 @@
-# AudioCloning — 个人声音克隆系统
+# AudioCloning — 音频模型体验工具箱 (v0.2.0)
 
-基于 **Fun-CosyVoice3-0.5B (MLX)** 的本地语音合成与克隆系统，运行于 Apple Silicon。  
-支持零样本声音克隆、跨语言合成、自然语言指令控制，以及基于 Qwen3-ASR 的语音识别。
+一个**模型可替换**的本地音频体验工具。内置基于 **Fun-CosyVoice3-0.5B (MLX)** 的语音合成/克隆
+与基于 **Qwen3-ASR** 的语音识别，运行于 Apple Silicon。功能框架（WebUI / REST API / 流程编排）与
+具体模型解耦，通过统一后端接口即可切换或接入新模型。
 
 ---
 
@@ -9,12 +10,17 @@
 
 | 功能 | 说明 |
 |------|------|
-| 零样本克隆 | 提供 3~30 秒参考音频即可克隆任意音色 |
-| 跨语言合成 | 使用源语言音色合成目标语言语音 |
-| 指令控制 | 通过自然语言指令控制语气、情感、语速 |
-| 语音识别 (ASR) | 基于 Qwen3-ASR-0.6B-GGUF 的本地语音转文字 |
+| 模型可替换 | 通过配置 / CLI 切换后端，无需改业务代码 |
+| 能力驱动 | 一个模型可聚合多种能力，一模型多任务 |
+| Text-to-Speech | 零样本克隆 / 跨语言 / 指令控制 / 长文本分段 |
+| Text-to-Audio | 由文本提示生成音乐 / 音效 |
+| Speech Recognition | 基于 Qwen3-ASR 的本地语音转文字 |
+| Audio-to-Audio | 变声 / 音色转换 / 音质增强 |
+| Audio Classification | 语音/音乐/环境声等分类 |
+| Voice Activity Detection | 说话片段检测 (VAD) |
 | WebUI | Gradio 交互界面，支持上传/录音 |
 | REST API | FastAPI 程序化接口，便于集成 |
+| dummy 后端 | 内置伪模型，无需 GPU 即可完整体验框架链路 |
 
 ---
 
@@ -22,7 +28,8 @@
 
 - **硬件**: Apple Silicon Mac (M1/M2/M3/M4)
 - **系统**: macOS 13+
-- **Python**: ≥ 3.13 (conda 环境 `agent`)
+- **Python**: 3.13（由 uv 管理虚拟环境）
+- **环境管理**: [uv](https://docs.astral.sh/uv/)（构建 Lock、解析依赖）
 - **系统依赖**: [llama.cpp](https://github.com/ggerganov/llama.cpp)（ASR 功能需要）
 
 ---
@@ -31,120 +38,134 @@
 
 ```
 AudioCloning/
-├── scripts/                    # 安装与模型下载脚本
-│   ├── setup.sh               # macOS 一键安装
-│   ├── setup.bat              # Windows 参考脚本 (MLX 不支持 Windows)
-│   ├── download_tts_model.py  # 下载 CosyVoice3 MLX 模型
-│   └── download_asr_model.py  # 下载 Qwen3-ASR GGUF 模型
-├── tests/                      # 端到端测试
-│   ├── test_tts.py            # TTS 三模式推理测试
-│   ├── test_asr.py            # ASR 识别测试
-│   └── test_roundtrip.py      # TTS→ASR 回环交叉验证
-├── src/                        # 核心源码
-│   ├── config.py              # 全局配置
-│   ├── app.py                 # WebUI 主入口
-│   ├── tts/                   # TTS 模块
-│   │   ├── engine.py          # TTSEngine 推理引擎 + 模型加载
-│   │   └── text_processor.py  # 长文本分段、归一化
-│   ├── asr/                   # ASR 模块
-│   │   └── engine.py          # ASREngine (llama-server 管理)
-│   ├── utils/                 # 工具模块
-│   │   └── audio.py           # 音频验证、保存、拼接
-│   ├── webui/                 # WebUI 组件
-│   │   ├── components.py      # Gradio 界面布局
-│   │   └── handlers.py        # 事件处理逻辑
-│   └── api/                   # REST API
-│       └── server.py          # FastAPI 服务
-├── asset/                      # 参考音频样本
-├── pretrained_models/          # 预训练模型 (需下载)
-├── outputs/                    # 合成音频输出
-└── requirements.txt            # Python 依赖
+├── pyproject.toml            # 项目元数据、依赖、CLI 入口
+├── uv.lock                   # 精确锁定依赖版本 (由 uv sync 生成)
+├── .python-version           # 固定 Python 3.13
+├── src/
+│   └── audioclone/           # 主包 (src-layout)
+│       ├── config.py         # 全局配置（含后端注册表）
+│       ├── core/
+│       │   ├── capabilities/ # 能力抽象层（一模型多任务）
+│       │   │   ├── base.py      # Capability / ModelBackend / supports()
+│       │   │   ├── tts.py       # TextToSpeechCapability
+│       │   │   ├── t2a.py       # TextToAudioCapability
+│       │   │   ├── asr.py       # SpeechRecognitionCapability
+│       │   │   ├── a2a.py       # AudioToAudioCapability
+│       │   │   ├── audio_classification.py # AudioClassificationCapability
+│       │   │   └── vad.py       # VoiceActivityCapability
+│       │   ├── backends/     # 模型实现层（可替换、可插拔）
+│       │   │   ├── registry.py  # 后端注册表
+│       │   │   ├── cosyvoice_mlx.py  # CosyVoice3 (MLX) TTS 后端
+│       │   │   ├── qwen3_asr_llama.py # Qwen3-ASR (llama.cpp) 后端
+│       │   │   └── dummy.py      # 伪模型后端（框架测试/快速演示）
+│       │   ├── service/      # 服务编排层（按能力消费，与模型解耦）
+│       │   │   ├── tts_service.py      # TTSService（分段/拼接/落盘）
+│       │   │   ├── text_to_audio_service.py # TextToAudioService
+│       │   │   ├── asr_service.py      # ASRService（格式/时长校验）
+│       │   │   ├── audio_to_audio_service.py # AudioToAudioService
+│       │   │   ├── audio_classification_service.py # AudioClassificationService
+│       │   │   ├── vad_service.py      # VoiceActivityService
+│       │   │   └── model_loader.py     # 按配置创建后端 + 能力查询
+│       │   └── text.py       # 长文本分段、归一化
+│       ├── webui/            # Gradio 界面（仅依赖服务层）
+│       │   ├── app.py        # 入口 (audioclone-webui)
+│       │   ├── components.py # 界面布局
+│       │   └── handlers.py   # 事件处理
+│       ├── api/              # FastAPI
+│       │   └── server.py     # 入口 (audioclone-api)
+│       ├── cli/              # 命令工具
+│       │   └── downloads.py  # 模型下载 (audioclone-download-*)
+│       └── utils/
+│           └── audio.py      # 音频验证、保存、拼接
+├── tests/                    # pytest（含 dummy 架构测试 + 集成测试）
+├── docs/                     # 重构方案 / ADR 文档
+├── asset/                    # 参考音频样本
+├── pretrained_models/        # 预训练模型 (需下载)
+└── outputs/                  # 合成音频输出
 ```
 
 ---
 
 ## 快速开始
 
-### 1. 一键安装
+### 1. 安装 uv 与依赖
 
 ```bash
-# 安装 llama.cpp (ASR 功能依赖)
-brew install llama.cpp
+# 安装 uv (若未安装)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 运行安装脚本
-bash scripts/setup.sh
+# 创建 .venv 并安装依赖 (自动按 .python-version 选用 Python 3.13)
+uv sync
+
+# 安装系统依赖 (ASR 功能需要)
+brew install llama.cpp
 ```
 
-### 2. 手动安装
+### 2. 下载模型
 
 ```bash
-# 激活 conda 环境
-conda activate agent
+# 下载 MLX 格式 TTS 模型 (约 1.1GB)
+uv run audioclone-download-tts
 
-# 安装 Python 依赖
-pip install -r requirements.txt
-
-# 下载 TTS 模型 (约 1.1GB)
-python scripts/download_tts_model.py
-
-# 下载 ASR 模型 (约 600MB)
-python scripts/download_asr_model.py
+# 下载 Qwen3-ASR GGUF 模型 (约 600MB)
+uv run audioclone-download-asr
 ```
 
 ### 3. 启动服务
 
 ```bash
 # 启动 WebUI (默认 http://localhost:7860)
-python src/app.py
+uv run audioclone-webui
 
 # 禁用 ASR 功能启动
-python src/app.py --no_asr
+uv run audioclone-webui --no_asr
+
+# 切换后端（无需真实模型即可完整体验框架链路）
+uv run audioclone-webui --tts-backend dummy --asr-backend dummy
 
 # 启动 REST API (默认 http://localhost:8000)
-python src/api/server.py
+uv run audioclone-api
 ```
 
-> **注意**: 启动 WebUI 前需设置 `export no_proxy=localhost,127.0.0.1`，否则 Gradio 可能连接异常。
+> **注**: 项目已在 `config.py` 中默认设置 `no_proxy=localhost,127.0.0.1`，代理不再造成本地回环连接异常。当前默认后端为 `cosyvoice3-mlx` + `qwen3-asr-llama`，可通过环境变量 `AUDIOCLONE_TTS_BACKEND` / `AUDIOCLONE_ASR_BACKEND` 或 CLI 参数切换。
 
 ---
 
-## 技术架构
+## 模型可替换：如何接入新后端
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    用户交互层                         │
-│   ┌──────────────┐         ┌──────────────────┐     │
-│   │  Gradio WebUI │         │  FastAPI REST API │     │
-│   │  (port 7860)  │         │  (port 8000)      │     │
-│   └──────┬───────┘         └────────┬─────────┘     │
-├──────────┼──────────────────────────┼───────────────┤
-│          │        业务逻辑层         │               │
-│   ┌──────▼──────────────────────────▼─────────┐     │
-│   │              TTSEngine                     │     │
-│   │  zero_shot / cross_lingual / instruct      │     │
-│   └──────────────────┬────────────────────────┘     │
-│   ┌──────────────────▼────────────────────────┐     │
-│   │              ASREngine                     │     │
-│   │  llama-server 子进程管理 + HTTP 通信        │     │
-│   └───────────────────────────────────────────┘     │
-├─────────────────────────────────────────────────────┤
-│                    模型层                            │
-│   ┌────────────────────┐  ┌─────────────────────┐   │
-│   │ CosyVoice3-0.5B    │  │ Qwen3-ASR-0.6B     │   │
-│   │ (MLX, fp16)        │  │ (GGUF, Q8_0)       │   │
-│   │ 24kHz 输出          │  │ 16kHz 输入          │   │
-│   └────────────────────┘  └─────────────────────┘   │
-└─────────────────────────────────────────────────────┘
+框架分为四层：**展示层 → 服务层 → 能力层 → 实现层**。核心是**按能力(Capability)组织**：
+一个模型后端可聚合多种能力（TTS / ASR / 变声 / 分类 / VAD 等），「任务 = 能力编排」。
+服务层只认能力，不认具体模型。接入新模型需两步：
+
+1. **实现后端接口**（继承 `ModelBackend` + 一个或多个能力接口），例如：
+
+```python
+# src/audioclone/core/backends/my_tts.py
+import numpy as np
+from audioclone.core.capabilities import ModelBackend, TextToSpeechCapability
+
+class MyTTSBackend(ModelBackend, TextToSpeechCapability):
+    name = "my-tts"
+    sample_rate = 24000
+
+    def synthesize(self, mode, text, ref_audio_path, ref_text="", instruct_text="", speed=1.0) -> np.ndarray:
+        ...
 ```
 
----
+   若模型同时支持语音识别，一并继承 `SpeechRecognitionCapability` 并实现 `transcribe`，即为**一模型多任务**。
+   服务层 `TTSService` / `ASRService` 会按能力校验后端是否可用。查询后端能力：`list_backend_capabilities(backend)`。
 
-## 模型信息
+2. **注册到配置**（`config.py`）：
 
-| 模型 | 用途 | 格式 | 来源 |
-|------|------|------|------|
-| Fun-CosyVoice3-0.5B-2512-fp16 | TTS 语音合成 | MLX (safetensors) | mlx-community / ModelScope |
-| Qwen3-ASR-0.6B-GGUF | ASR 语音识别 | GGUF (Q8_0) | ggml-org / ModelScope |
+```python
+TTS_BACKENDS["my-tts"] = {
+    "factory": "audioclone.core.backends.my_tts.MyTTSBackend",
+    "model_id": "my-org/my-model",
+}
+```
+
+随后即可 `uv run audioclone-webui --tts-backend my-tts` 启用。扩展新任务（如变声/分类/VAD）只需新增对应 `Capability`
+接口 + 配套 Service，已有后端聚合该能力即可，WebUI / API 与其余业务无需改动。
 
 ---
 
@@ -181,7 +202,7 @@ Content-Type: multipart/form-data
 | `ref_text` | string | | 参考音频对应文字 |
 | `speed` | float | | 语速 0.5~2.0，默认 1.0 |
 | `mode` | string | | `zero_shot` / `cross_lingual` / `instruct` |
-| `instruct_text` | string | | 自然语言指令 (instruct 模式) |
+| `instruct_text` | string | | 自然语言指令 (instruct 模式，必填) |
 
 响应: WAV 音频文件流，Header 含 `X-Synthesis-Time`。
 
@@ -189,7 +210,7 @@ Content-Type: multipart/form-data
 
 ## 配置说明
 
-核心配置位于 `src/config.py`：
+核心配置位于 `src/audioclone/config.py`：
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
@@ -207,35 +228,42 @@ Content-Type: multipart/form-data
 ## 测试
 
 ```bash
-conda activate agent
+# 纯逻辑单元测试 (无需模型/GPU)
+uv run pytest -m "not integration"
 
-# TTS 三模式端到端测试
-python tests/test_tts.py
-
-# ASR 语音识别测试
-python tests/test_asr.py
-
-# TTS→ASR 回环交叉验证 (LCS 匹配率 ≥ 80% 为通过)
-python tests/test_roundtrip.py
+# 全部测试 (集成测试缺少模型时自动跳过)
+uv run pytest
 ```
+
+集成测试(`tests/test_tts.py`、`tests/test_asr.py`、`tests/test_roundtrip.py`)需要本地模型与 llama.cpp，未就绪会自动跳过。
 
 ---
 
-## 依赖清单
+## 开发
 
-| 包 | 版本 | 用途 |
-|----|------|------|
-| mlx-audio-plus | ≥0.1.7 | CosyVoice3 MLX 推理 |
-| mlx-lm | ≥0.31.0 | MLX 语言模型基础 |
-| modelscope | ≥1.20.0 | 模型下载 |
-| gradio | ≥5.4.0 | WebUI 界面 |
-| soundfile | ≥0.12.1 | 音频 I/O |
-| numpy | ≥1.26 | 数值计算 |
-| scipy | ≥1.11.0 | 音频重采样 |
-| fastapi | ≥0.115.6 | REST API |
-| uvicorn | ≥0.30.0 | ASGI 服务器 |
-| httpx | ≥0.27.0 | ASR HTTP 通信 |
-| llama.cpp | 系统级 | ASR 推理 (llama-server) |
+```bash
+uv run ruff check .
+uv run pytest
+```
+
+### 常用 uv 命令
+
+| 命令 | 说明 |
+|------|------|
+| `uv sync` | 安装/同步依赖到 `.venv` |
+| `uv add <pkg>` | 新增运行依赖 |
+| `uv add --dev <pkg>` | 新增开发依赖 |
+| `uv remove <pkg>` | 移除依赖 |
+| `uv run <script>` | 在虚拟环境中运行命令 |
+
+---
+
+## 模型信息
+
+| 模型 | 用途 | 格式 | 来源 |
+|------|------|------|------|
+| Fun-CosyVoice3-0.5B-2512-fp16 | TTS 语音合成 | MLX (safetensors) | mlx-community / ModelScope |
+| Qwen3-ASR-0.6B-GGUF | ASR 语音识别 | GGUF (Q8_0) | ggml-org / ModelScope |
 
 ---
 
