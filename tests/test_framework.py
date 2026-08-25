@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -320,3 +322,86 @@ def test_new_services_reject_incapable_backend(service, backend):
     """新 Service 同样拒绝不具备对应能力的后端。"""
     with pytest.raises(AudioError):
         service(backend())  # type: ignore[arg-type]
+
+
+# ─── registry 按能力聚合查询 ─────────────────────────────────
+def test_registry_list_backends_for():
+    from audioclone.core.backends.registry import registry
+
+    tts = set(registry.list_backends_for(TextToSpeechCapability))
+    assert {"dummy", "dummy-omni", "cosyvoice3-mlx"} <= tts
+
+    asr = set(registry.list_backends_for(SpeechRecognitionCapability))
+    assert {"dummy", "dummy-omni", "qwen3-asr-llama"} <= asr
+
+    vad = registry.list_backends_for(VoiceActivityCapability)
+    assert "dummy-omni" in vad
+    assert "dummy" not in vad  # 纯 TTS/ASR dummy 不具备 VAD 能力
+
+
+# ─── RLock 串行化（并发安全） ────────────────────────────────
+def test_rlock_serializes_synthesis():
+    class SlowBackend(DummyTTSBackend):
+        """记录最大并发合成数，验证 RLock 串行。"""
+
+        def __init__(self):
+            super().__init__(sample_rate=24000)
+            self.active = 0
+            self.max_active = 0
+            self._guard = threading.Lock()
+
+        def synthesize(self, *a, **k):
+            with self._guard:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.01)
+            with self._guard:
+                self.active -= 1
+            return super().synthesize(*a, **k)
+
+    svc = TTSService(SlowBackend())
+    errors: list[Exception] = []
+
+    def worker() -> None:
+        try:
+            svc.infer_zero_shot("你好，并发测试。", "unused.wav")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert svc.backend.max_active == 1  # 串行化：无并发合成
+
+
+# ─── 长文本：段间静音 + 进度回调 + 逐段落盘 ──────────────────
+def test_tts_segment_gap_progress_and_keep(tmp_path, monkeypatch):
+    monkeypatch.setattr("audioclone.core.service.tts_service.OUTPUT_DIR", tmp_path)
+    svc = TTSService(DummyTTSBackend(sample_rate=24000))
+
+    calls: list[tuple[int, int]] = []
+    text = "这是用于分段测试的句子。" * 40  # > 300 字符，强制多段
+    out = svc.synthesize_to_file(
+        mode="zero_shot",
+        text=text,
+        ref_audio_path="unused.wav",
+        filename="gap.wav",
+        progress_cb=lambda i, n: calls.append((i, n)),
+        keep_segments=True,
+    )
+
+    assert len(calls) >= 2  # 多段
+    assert calls[-1] == (len(calls), len(calls))  # 进度覆盖到末段
+
+    seg_dir = tmp_path / "segments"
+    seg_files = sorted(seg_dir.glob("gap_seg_*.wav"))
+    assert len(seg_files) == len(calls)  # 逐段落盘
+
+    # 段间插入了静音 → 总时长大于各段时长之和
+    info = sf.info(out)
+    total_seg_sec = len(calls) * 0.5
+    assert info.duration > total_seg_sec

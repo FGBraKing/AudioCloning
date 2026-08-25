@@ -6,8 +6,34 @@
 ## [Unreleased]
 
 ### 计划
-- 接入 T2A / A2A / 音频分类 / VAD 真实后端
-- 结构化日志叠加 trace_id / JSON（当前为请求日志中间件）
+- 接入 T2A / A2A / 音频分类 / VAD 真实后端（v0.3.0）
+- P0 项：版本单一来源、registry 统一、采样率时序、ASR 分片重叠（见 QUALITY-REPORT §9）
+
+## [v0.2.2] - 2026-08-26
+
+### 体验与工程（P1）
+- 配置单源化：全部可调参数收编进 `Settings`（env 前缀 `AUDIOCLONE_` 可覆盖），模块级常量派生
+- 共享校验：新增 `utils/validation.py`（`assert_tts_text` / `assert_valid_mode`），API 与 WebUI 复用
+- ASR 子进程日志迁至 `logs/asr_llama_server.log`（独立于 `outputs/`）
+- 类型覆盖：`cosyvoice_mlx.py` 与 `webui/` 纳入 mypy（0 errors / 39 文件）
+- 覆盖率盲区：`webui/handlers.py`、`api/server.py` 纳入统计；补 handler/API 异常/loudness/list_backends_for/sanitize 边界/RLock 并发用例
+- 函数内 import 上提（中间件 / `_json_error`）
+
+### 音频与体验（P1/P2）
+- 响度归一化接线：`AUDIOCLONE_TTS_NORMALIZE_LOUDNESS`（EBU R128，落盘前可选）
+- 长文本体验：段间静音 `AUDIOCLONE_TTS_SEGMENT_GAP_SEC`（0.15s）、`progress_cb` 进度回调、`keep_segments` 逐段落盘
+- WebUI 多任务 Tab：T2A / A2A / 音频分类 / VAD，按后端能力动态可用（dummy-omni 全支持）
+
+### 可观测
+- API 请求注入 trace_id（`X-Request-ID` 响应头 + 日志字段）
+- `AUDIOCLONE_LOG_JSON=1` 启用单行 JSON 结构化日志
+- Prometheus 风格 `/api/metrics`（请求计数 / 合成耗时 / 运行时长）
+
+### 工程化与文档
+- `.env.example`、`.pre-commit-config.yaml`（ruff+mypy+pytest）、`Makefile` 快捷命令
+- 修复 `audioclone-download-asr` 因缺 `model_id` 无法下载的问题
+- `QUALITY-REPORT.md` 第三轮复审（适用 v0.2.2，§9 P1/P2 已实施）
+- `USER-GUIDE.md` 修订（适用 v0.2.2）
 
 ## [v0.2.1] - 2026-08-25
 

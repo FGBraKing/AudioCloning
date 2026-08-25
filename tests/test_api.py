@@ -98,10 +98,78 @@ def test_clone_rejects_bad_format(client):
     assert "不支持的音频格式" in resp.json()["detail"]
 
 
-def test_clone_rejects_invalid_audio(client):
+@pytest.fixture(scope="module")
+def broken_client():
+    """注入一个合成时抛异常的后端，用于验证 500 通用错误路径。"""
+    from audioclone.api import server
+    from audioclone.core.backends.dummy import DummyTTSBackend
+
+    class BrokenBackend(DummyTTSBackend):
+        name = "broken"
+
+        def synthesize(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    engine = TTSService(BrokenBackend(sample_rate=24000))
+
+    original_lifespan = server.app.router.lifespan_context
+
+    @asynccontextmanager
+    async def fake_lifespan(app):
+        app.state.engine = engine
+        app.state.backend = engine.backend
+        yield
+
+    server.app.router.lifespan_context = fake_lifespan
+    with TestClient(server.app) as c:
+        yield c
+    server.app.router.lifespan_context = original_lifespan
+
+
+def test_metrics(client):
+    client.get("/api/health")
+    resp = client.get("/api/metrics")
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("text/plain")
+    assert "audioclone_requests_total" in resp.text
+    assert "audioclone_uptime_seconds" in resp.text
+
+
+def test_response_has_request_id(client):
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert "x-request-id" in resp.headers
+
+
+def test_clone_instruct_missing_instruct(client):
+    resp = client.post(
+        "/api/clone",
+        data={"text": "hi", "mode": "instruct"},
+        files=_upload(_make_wav_bytes()),
+    )
+    assert resp.status_code == 400
+    assert "instruct" in resp.json()["detail"]
+
+
+def test_clone_upload_too_large(client, monkeypatch):
+    from audioclone.api import server
+
+    monkeypatch.setattr(server, "MAX_UPLOAD_BYTES", 100)  # 压到 100 字节
+    big = b"\x00" * 200
     resp = client.post(
         "/api/clone",
         data={"text": "hi"},
-        files={"ref_audio": ("bad.wav", io.BytesIO(b"not audio"), "audio/wav")},
+        files={"ref_audio": ("big.wav", io.BytesIO(big), "audio/wav")},
     )
-    assert resp.status_code == 400  # 时长校验失败
+    assert resp.status_code == 400
+    assert "上传文件过大" in resp.json()["detail"]
+
+
+def test_clone_internal_error(broken_client):
+    resp = broken_client.post(
+        "/api/clone",
+        data={"text": "hi"},
+        files=_upload(_make_wav_bytes()),
+    )
+    assert resp.status_code == 500
+    assert "boom" in resp.json()["detail"]

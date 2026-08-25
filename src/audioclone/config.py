@@ -1,8 +1,8 @@
 """AudioCloning 全局配置。
 
 不产生 import 副作用：本模块不写环境变量、不创建目录。
-网络代理等副作用交由应用入口显式设置；输出目录需用时经 ``ensure_output_dir()`` 惰性创建。
-运行时可通过环境变量（前缀 ``AUDIOCLONE_``）覆盖部分配置，见 ``Settings``。
+网络代理等副作用交由应用入口显式设置；输出/日志目录需用时经 ``ensure_*_dir()`` 惰性创建。
+运行时可通过环境变量（前缀 ``AUDIOCLONE_``）或 ``.env`` 覆盖配置，见 ``Settings``。
 """
 
 from __future__ import annotations
@@ -12,16 +12,20 @@ from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# ─── 路径配置 ───────────────────────────────────────────────
+# ─── 路径配置（非 env 覆盖，属仓库布局） ─────────────────────
 # src/audioclone/config.py -> 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # 模型配置（MLX 格式）
 MODEL_ID = "mlx-community/Fun-CosyVoice3-0.5B-2512-fp16"
 MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Fun-CosyVoice3-0.5B-2512-fp16"
+ASR_MODEL_ID = "ggml-org/Qwen3-ASR-0.6B-GGUF"
+ASR_MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Qwen3-ASR-0.6B-GGUF"
 
-# ─── 输出配置 ───────────────────────────────────────────────
+# 输出 / 日志目录
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
+LOGS_DIR = PROJECT_ROOT / "logs"
+ASSET_DIR = PROJECT_ROOT / "asset"
 
 
 def ensure_output_dir() -> Path:
@@ -30,34 +34,11 @@ def ensure_output_dir() -> Path:
     return OUTPUT_DIR
 
 
-# ─── 音频配置 ───────────────────────────────────────────────
-SAMPLE_RATE = 24000                    # CosyVoice3 输出采样率
-REF_AUDIO_MAX_SEC = 30                 # 参考音频最大时长(秒)
-REF_AUDIO_MIN_SEC = 1                  # 参考音频最小时长(秒)
-REF_AUDIO_MIN_SR = 8000                # 参考音频最低采样率(Hz)
+def ensure_logs_dir() -> Path:
+    """惰性创建日志目录（避免 import 副作用）。"""
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    return LOGS_DIR
 
-# ─── 文本配置 ───────────────────────────────────────────────
-MAX_TEXT_LENGTH = 300                  # 单次合成最大字符数
-
-# ─── WebUI 配置 ─────────────────────────────────────────────
-GRADIO_PORT = 7860
-GRADIO_HOST = "127.0.0.1"        # 默认仅本机访问（部署护栏）；公网服务需反向代理 + HTTPS
-GRADIO_MAX_QUEUE = 4
-GRADIO_CONCURRENCY = 2
-
-# ─── 资源目录 ───────────────────────────────────────────────
-ASSET_DIR = PROJECT_ROOT / "asset"
-
-# ─── ASR 配置 ─────────────────────────────────────────────
-ASR_MODEL_ID = "ggml-org/Qwen3-ASR-0.6B-GGUF"
-ASR_MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Qwen3-ASR-0.6B-GGUF"
-ASR_SERVER_PORT = 8090
-ASR_SERVER_HOST = "127.0.0.1"
-ASR_CTX_SIZE = 4096
-ASR_N_GPU_LAYERS = 99           # Metal 全量 offload
-ASR_AUDIO_MAX_SEC = 300         # 最大音频时长（秒）
-ASR_SUPPORTED_FORMATS = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
-ASR_SAMPLE_RATE = 16000          # Qwen3-ASR 要求的输入采样率
 
 # ─── 后端注册表（模型可替换） ───────────────────────────────
 # 每个后端: factory=加载路径(module.Class)，其余键作为构造参数。
@@ -69,17 +50,18 @@ TTS_BACKENDS: dict[str, dict[str, Any]] = {
     },
     "dummy": {
         "factory": "audioclone.core.backends.dummy.DummyTTSBackend",
-        "sample_rate": SAMPLE_RATE,
+        "sample_rate": 24000,
     },
     "dummy-omni": {
         "factory": "audioclone.core.backends.dummy.DummyOmnibackend",
-        "sample_rate": SAMPLE_RATE,
+        "sample_rate": 24000,
     },
 }
 
 ASR_BACKENDS: dict[str, dict[str, Any]] = {
     "qwen3-asr-llama": {
         "factory": "audioclone.core.backends.qwen3_asr_llama.Qwen3AsrLlamaBackend",
+        "model_id": ASR_MODEL_ID,
         "model_dir": str(ASR_MODEL_DIR),
     },
     "dummy": {
@@ -87,39 +69,96 @@ ASR_BACKENDS: dict[str, dict[str, Any]] = {
     },
     "dummy-omni": {
         "factory": "audioclone.core.backends.dummy.DummyOmnibackend",
-        "sample_rate": SAMPLE_RATE,
+        "sample_rate": 24000,
     },
 }
 
 
 class Settings(BaseSettings):
-    """运行时配置，可由 env（前缀 ``AUDIOCLONE_``）或 ``.env`` 覆盖。"""
+    """运行时配置，可由 env（前缀 ``AUDIOCLONE_``）或 ``.env`` 覆盖。
+
+    所有可调参数统一收编于此（单源化）；模块级常量由本类派生，保持既有导入面。
+    """
 
     model_config = SettingsConfigDict(env_prefix="AUDIOCLONE_", env_file=".env", extra="ignore")
 
-    # 默认后端
+    # ── 默认后端 ───────────────────────────────────────────
     tts_backend: str = "cosyvoice3-mlx"
     asr_backend: str = "qwen3-asr-llama"
 
-    # 上传/资源限流
+    # ── 音频（TTS 输出 / 参考音频校验） ─────────────────────
+    sample_rate: int = 24000               # CosyVoice3 输出采样率
+    ref_audio_max_sec: int = 30            # 参考音频最大时长(秒)
+    ref_audio_min_sec: int = 1             # 参考音频最小时长(秒)
+    ref_audio_min_sr: int = 8000           # 参考音频最低采样率(Hz)
+    max_text_length: int = 300             # 单次合成最大字符数
+
+    # ── WebUI ──────────────────────────────────────────────
+    gradio_port: int = 7860
+    gradio_host: str = "127.0.0.1"         # 默认仅本机访问（部署护栏）
+    gradio_max_queue: int = 4
+    gradio_concurrency: int = 2
+
+    # ── ASR ────────────────────────────────────────────────
+    asr_server_host: str = "127.0.0.1"
+    asr_server_port: int = 8090
+    asr_ctx_size: int = 4096
+    asr_n_gpu_layers: int = 99             # Metal 全量 offload
+    asr_audio_max_sec: int = 300           # 最大音频时长（秒）
+    asr_supported_formats: list[str] = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
+    asr_sample_rate: int = 16000           # Qwen3-ASR 要求的输入采样率
+    asr_http_timeout: float = 120.0        # 识别 HTTP 超时（秒）
+    asr_ready_timeout: float = 60.0        # llama-server 就绪等待超时（秒）
+    asr_max_segment_sec: float = 60.0      # ASR 长音频分片阈值（秒）
+
+    # ── 上传 / 资源限流 ────────────────────────────────────
     max_upload_bytes: int = 100 * 1024 * 1024   # 上传音频最大字节数
 
-    # ASR HTTP
-    asr_http_timeout: float = 120.0
-    asr_ready_timeout: float = 60.0
-
-    # 输出目录保留上限（<=0 表示不清理；P2 生命周期管理）
+    # ── 输出目录保留上限（<=0 表示不清理） ──────────────────
     output_keep_max: int = 0
+
+    # ── 合成体验（v0.2.2） ─────────────────────────────────
+    tts_normalize_loudness: bool = False   # 落盘前按 EBU R128 响度归一化（可选）
+    tts_segment_gap_sec: float = 0.15      # 长文本分段间插入静音（秒）
+
+    # ── 日志（v0.2.2） ─────────────────────────────────────
+    log_json: bool = False                 # 结构化 JSON 日志
 
 
 settings = Settings()
 
-TTS_BACKEND = settings.tts_backend
-ASR_BACKEND = settings.asr_backend
-MAX_UPLOAD_BYTES = settings.max_upload_bytes
+# ─── 派生常量（单一来源 = Settings；保持既有导入面不变） ─────
+SAMPLE_RATE = settings.sample_rate
+REF_AUDIO_MAX_SEC = settings.ref_audio_max_sec
+REF_AUDIO_MIN_SEC = settings.ref_audio_min_sec
+REF_AUDIO_MIN_SR = settings.ref_audio_min_sr
+MAX_TEXT_LENGTH = settings.max_text_length
+
+GRADIO_PORT = settings.gradio_port
+GRADIO_HOST = settings.gradio_host
+GRADIO_MAX_QUEUE = settings.gradio_max_queue
+GRADIO_CONCURRENCY = settings.gradio_concurrency
+
+ASR_SERVER_HOST = settings.asr_server_host
+ASR_SERVER_PORT = settings.asr_server_port
+ASR_CTX_SIZE = settings.asr_ctx_size
+ASR_N_GPU_LAYERS = settings.asr_n_gpu_layers
+ASR_AUDIO_MAX_SEC = settings.asr_audio_max_sec
+ASR_SUPPORTED_FORMATS = settings.asr_supported_formats
+ASR_SAMPLE_RATE = settings.asr_sample_rate
 ASR_HTTP_TIMEOUT = settings.asr_http_timeout
 ASR_READY_TIMEOUT = settings.asr_ready_timeout
+ASR_MAX_SEGMENT_SEC = settings.asr_max_segment_sec
+
+MAX_UPLOAD_BYTES = settings.max_upload_bytes
 OUTPUT_KEEP_MAX = settings.output_keep_max
+
+TTS_BACKEND = settings.tts_backend
+ASR_BACKEND = settings.asr_backend
+
+TTS_NORMALIZE_LOUDNESS = settings.tts_normalize_loudness
+TTS_SEGMENT_GAP_SEC = settings.tts_segment_gap_sec
+LOG_JSON = settings.log_json
 
 # API 上传允许的音频扩展名
 ALLOWED_UPLOAD_EXT = ASR_SUPPORTED_FORMATS

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import gradio as gr
 
 from audioclone.config import MAX_TEXT_LENGTH
 
-# 各 Tab 暴露给外层绑定的组件 key
-ComponentGroup = dict[str, gr.components.Component]
+# 各 Tab 暴露给外层绑定的组件 key（Gradio 组件类型不统一，用 Any 便于事件绑定）
+ComponentGroup = dict[str, Any]
 
 
 def _char_count_html(text: str) -> str:
@@ -220,4 +222,65 @@ def build_asr_tab() -> ComponentGroup:
         "info": asr_info,
         "generate_btn": asr_generate_btn,
         "clear_btn": asr_clear_btn,
+    }
+
+
+def build_multitask_tab() -> ComponentGroup:
+    """构建 Tab5: 多任务实验台（T2A / A2A / 音频分类 / VAD）。
+
+    各子任务是否可用取决于当前后端是否具备对应能力；
+    使用 ``dummy-omni`` 全能力后端可完整体验。
+    """
+    gr.Markdown(
+        "### 🧪 多任务实验台\n"
+        "以下任务按后端能力动态可用；使用 `dummy-omni` 全能力后端可全部体验，"
+        "否则将提示“当前后端不支持该能力”。"
+    )
+    with gr.Row():
+        with gr.Column():
+            gr.Markdown("### 文本转音频 (T2A)")
+            t2a_text = gr.Textbox(
+                label="文本提示（描述声音/音乐/音效）",
+                lines=2,
+                value="轻柔的钢琴背景音乐",
+            )
+            t2a_duration = gr.Number(value=2.0, label="时长(秒)", minimum=0.5, maximum=30)
+            t2a_generate = gr.Button("生成", variant="primary")
+            t2a_output = gr.Audio(label="生成音频")
+
+        with gr.Column():
+            gr.Markdown("### 音频到音频 (A2A)")
+            a2a_audio = gr.Audio(sources=["upload"], type="filepath", label="上传音频")
+            a2a_instruct = gr.Textbox(label="转换指令（如“改成男声”）", value="改成男声", lines=1)
+            a2a_generate = gr.Button("转换", variant="primary")
+            a2a_output = gr.Audio(label="转换结果")
+
+    with gr.Row():
+        with gr.Column():
+            gr.Markdown("### 音频分类")
+            cls_audio = gr.Audio(sources=["upload"], type="filepath", label="上传音频")
+            cls_generate = gr.Button("分类", variant="primary")
+            cls_output = gr.Textbox(label="分类结果", lines=4, interactive=False)
+
+        with gr.Column():
+            gr.Markdown("### 语音活动检测 (VAD)")
+            vad_audio = gr.Audio(sources=["upload"], type="filepath", label="上传音频")
+            vad_generate = gr.Button("检测", variant="primary")
+            vad_output = gr.Textbox(label="语音片段 (start-end)", lines=4, interactive=False)
+
+    return {
+        "t2a_text": t2a_text,
+        "t2a_duration": t2a_duration,
+        "t2a_generate": t2a_generate,
+        "t2a_output": t2a_output,
+        "a2a_audio": a2a_audio,
+        "a2a_instruct": a2a_instruct,
+        "a2a_generate": a2a_generate,
+        "a2a_output": a2a_output,
+        "cls_audio": cls_audio,
+        "cls_generate": cls_generate,
+        "cls_output": cls_output,
+        "vad_audio": vad_audio,
+        "vad_generate": vad_generate,
+        "vad_output": vad_output,
     }

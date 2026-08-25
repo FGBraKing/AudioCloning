@@ -58,7 +58,8 @@ addopts = "-ra"
 # 覆盖率目标
 [tool.coverage.run]
 source = ["audioclone"]
-omit = ["src/audioclone/webui/*", "src/audioclone/api/server.py"]
+# 仅 UI 布局（app/components）无法单测，其余源码全部纳入统计
+omit = ["src/audioclone/webui/app.py", "src/audioclone/webui/components.py"]
 
 [tool.coverage.report]
 fail_under = 60
@@ -70,10 +71,6 @@ check_untyped_defs = true
 ignore_missing_imports = true
 no_implicit_optional = true
 warn_unused_configs = true
-exclude = [
-    "src/audioclone/core/backends/cosyvoice_mlx.py",
-    "src/audioclone/webui/",
-]
 
 [tool.ruff]
 line-length = 100

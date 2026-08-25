@@ -2,10 +2,10 @@
 
 | 元信息 | 值 |
 |--------|----|
-| 文档版本 | 1.0 |
-| **适用版本** | **v0.2.1** |
+| 文档版本 | 1.1 |
+| **适用版本** | **v0.2.2** |
 | 文档类型 | 使用说明（安装 / 配置 / 能力使用 / API / 扩展 / 故障排查 / 部署） |
-| 创建日期 | 2026-08-25 |
+| 创建日期 | 2026-08-25（v0.2.2 修订 2026-08-26） |
 | 配套文档 | `QUALITY-REPORT.md`、`REFACTOR-001-audio-toolbox.md`、`README.md` |
 
 ---
@@ -24,6 +24,14 @@
 v0.2.1 相比 v0.2.0 的加固点：领域异常体系、pydantic 配置、registry 收敛、能力抽象契约、
 音频数值安全、因果重采样、ASR 超时与日志重定向、FastAPI 线程池、上传限流、MLX 串行锁、
 模型生命周期统一、契约/API/音频工具测试与覆盖率门槛、mypy 类型检查。
+
+v0.2.2（本版文档）相比 v0.2.1 的新增与修订：ASR 长音频分片识别、文本分段器接口化（`TextSegmenter`）、
+响度归一化（`loudness_normalize`，已接入合成管线）、WebUI handler 错误装饰器与加载耗时展示、
+registry 按能力聚合查询（`list_backends_for`）、API 请求日志中间件、校验接口收敛
+（`assert_valid_ref_audio`）、默认仅本机绑定、性能基准/客观指标脚本（`tools/`）、CHANGELOG 与 GitHub Actions CI。
+本版已按 `QUALITY-REPORT.md` §9 落地 **P1 全部 + P2**：配置单源化、共享校验助手、ASR 日志目录、
+mypy/覆盖率盲区收编、trace_id + JSON 日志 + `/api/metrics`、长文本段间静音/进度回调/逐段落盘、
+`.env.example` + pre-commit + Makefile、WebUI 多任务实验台（T2A/A2A/分类/VAD）。P0 项留待下轮。
 
 ---
 
@@ -61,14 +69,22 @@ brew install llama.cpp
 |------|------|------|
 | `AUDIOCLONE_TTS_BACKEND` | `cosyvoice3-mlx` | 默认 TTS 后端 |
 | `AUDIOCLONE_ASR_BACKEND` | `qwen3-asr-llama` | 默认 ASR 后端 |
+| `AUDIOCLONE_SAMPLE_RATE` | `24000` | TTS 输出采样率 |
+| `AUDIOCLONE_REF_AUDIO_MAX_SEC` / `MIN_SEC` / `MIN_SR` | `30` / `1` / `8000` | 参考音频校验 |
+| `AUDIOCLONE_MAX_TEXT_LENGTH` | `300` | 单次合成最大字符数 |
+| `AUDIOCLONE_GRADIO_PORT` / `HOST` / `MAX_QUEUE` / `CONCURRENCY` | `7860` / `127.0.0.1` / `4` / `2` | WebUI 参数 |
+| `AUDIOCLONE_ASR_SERVER_HOST` / `PORT` / `CTX_SIZE` / `N_GPU_LAYERS` | `127.0.0.1` / `8090` / `4096` / `99` | llama-server 参数 |
+| `AUDIOCLONE_ASR_AUDIO_MAX_SEC` / `SAMPLE_RATE` / `MAX_SEGMENT_SEC` | `300` / `16000` / `60` | ASR 时长/采样率/分片阈值 |
+| `AUDIOCLONE_ASR_HTTP_TIMEOUT` / `READY_TIMEOUT` | `120.0` / `60.0` | ASR HTTP / 就绪等待超时（秒） |
 | `AUDIOCLONE_MAX_UPLOAD_BYTES` | `104857600`(100MB) | API 上传音频大小上限 |
-| `AUDIOCLONE_ASR_HTTP_TIMEOUT` | `120.0` | ASR 识别 HTTP 超时（秒） |
-| `AUDIOCLONE_ASR_READY_TIMEOUT` | `60.0` | llama-server 就绪等待超时（秒） |
 | `AUDIOCLONE_OUTPUT_KEEP_MAX` | `0` | 输出目录保留文件数（`<=0` 不清理） |
+| `AUDIOCLONE_TTS_NORMALIZE_LOUDNESS` | `false` | 落盘前按 EBU R128 响度归一化 |
+| `AUDIOCLONE_TTS_SEGMENT_GAP_SEC` | `0.15` | 长文本分段间插入静音（秒） |
+| `AUDIOCLONE_LOG_JSON` | `false` | 启用单行 JSON 结构化日志 |
 | `COSYVOICE_MODEL_DIR` | `pretrained_models/...` | API 服务覆盖 TTS 模型目录 |
 | `no_proxy` / `NO_PROXY` | `localhost,127.0.0.1`（入口自动设置） | 绕过本地代理 |
 
-也可在项目根放 `.env`（`pydantic-settings` 自动加载）。
+完整示例见项目根 `.env.example`；也可直接复制为 `.env`（`pydantic-settings` 自动加载）。
 
 ### 4.2 后端注册表（`src/audioclone/config.py`）
 
@@ -136,6 +152,8 @@ uv run audioclone-api              # http://127.0.0.1:8000（见 §12 部署护�
 | `uv run pytest --cov=audioclone` | 带覆盖率（门槛 60%） |
 | `uv run ruff check .` | 静态检查 |
 | `uv run mypy src/audioclone` | 类型检查 |
+| `uv run python -m tools.benchmark --backend dummy-omni --iterations 3` | TTS 性能基准（冷启动/单次合成耗时） |
+| `uv run python -m tools.eval_quality --ref asset/zero_shot_prompt.wav --synth outputs/test.wav` | 合成质量客观指标（频谱距离，越低越好） |
 
 ---
 
@@ -184,9 +202,17 @@ curl -X POST http://127.0.0.1:8000/api/clone \
   -D - -o out.wav
 ```
 
-响应：WAV 音频流，Header 含 `X-Synthesis-Time`（秒）。
+响应：WAV 音频流，Header 含 `X-Synthesis-Time`（秒）。所有响应均含 `X-Request-ID`（trace_id，与请求日志字段对应）。
 
-### 7.3 错误响应
+### 7.3 指标
+
+```
+GET /api/metrics
+```
+Prometheus 文本格式：`audioclone_requests_total{path,status}`、`audioclone_synthesis_count_total`、
+`audioclone_synthesis_seconds_total`、`audioclone_uptime_seconds`。
+
+### 7.4 错误响应
 
 | 场景 | 状态码 | 说明 |
 |------|:---:|------|
@@ -210,7 +236,9 @@ path = svc.synthesize_to_file(
     ref_audio_path="asset/zero_shot_prompt.wav",
     ref_text="希望你以后能够做的比我还好呦。",
     filename="demo.wav",
-)  # 落盘前自动 sanitize_audio；若 OUTPUT_KEEP_MAX>0 会自动清理旧输出
+    progress_cb=lambda i, n: print(f"段 {i}/{n}"),  # 进度回调
+    keep_segments=True,                              # 逐段落盘到 outputs/segments/
+)  # 落盘前自动 sanitize_audio；AUDIOCLONE_TTS_NORMALIZE_LOUDNESS=1 可选响度归一化
 
 import numpy as np
 audio: np.ndarray = svc.infer_zero_shot("你好", "asset/zero_shot_prompt.wav")  # RLock 串行
@@ -261,11 +289,13 @@ API 已注册统一 `exception_handler`。
 
 ```bash
 uv run pytest -m "not integration"                 # 快速：单元/架构/契约/API
-uv run pytest --cov=audioclone                     # 覆盖率（门槛 60%，实测 ~65%）
+uv run pytest --cov=audioclone                     # 覆盖率（门槛 60%，实测 ~73%）
 uv run ruff check .                                # 静态
-uv run mypy src/audioclone                         # 类型（0 errors）
+uv run mypy src/audioclone                         # 类型（0 errors，全量 39 文件）
 uv run pytest                                      # 含集成（缺模型自动跳过）
 ```
+
+> 工程化：`make setup/lint/type/test/cov` 快捷命令；`uv tool run pre-commit install` 启用提交钩子（ruff+mypy+pytest）。
 
 集成测试（`tests/test_tts.py` / `test_asr.py` / `test_roundtrip.py`）需先下载模型并保证 `llama-server` 可用。
 
@@ -278,7 +308,7 @@ uv run pytest                                      # 含集成（缺模型自动
 | 启动 WebUI 报 `ImportError: Using SOCKS proxy... socksio` | 环境含 `ALL_PROXY=socks5://` | `unset ALL_PROXY all_proxy` 后启动，或安装 `httpx[socks]` |
 | WebUI 端口占用 503 / 连接失败 | 端口被占/本地代理 | 改 `--port`；确认 `no_proxy=localhost` 已设 |
 | "ASR 模型文件未找到" | 未下载 ASR 模型 / 未装 llama.cpp | `uv run audioclone-download-asr`；`brew install llama.cpp` |
-| ASR `RuntimeError: ASR 服务未就绪` | llama-server 未起/启动失败 | 查 `outputs/asr_llama_server.log`、端口 8090、模型完整性 |
+| ASR `RuntimeError: ASR 服务未就绪` | llama-server 未起/启动失败 | 查 `logs/asr_llama_server.log`、端口 8090、模型完整性 |
 | API 返回 400 上传过大 | 超过 `AUDIOCLONE_MAX_UPLOAD_BYTES` | 调大 env 或压缩音频 |
 | `CapabilityError` | Service 接错后端 | 选用具备对应能力的能力后端（如 dummy-omni） |
 | 合成偶发异常 | 并发/模型不稳定 | `TTSService` 已 RLock 串行；重试即可 |
@@ -287,10 +317,10 @@ uv run pytest                                      # 含集成（缺模型自动
 
 ## 12. 生产与部署护栏（重要）
 
-- **版本**：当前仓库基线 `0.2.1`；质量报告见 `QUALITY-REPORT.md`。
-- **绑定地址**：本地体验用 `--host 127.0.0.1`；**不要**直接以 `0.0.0.0` 暴露公网。
+- **版本**：当前仓库基线 `0.2.1`；本使用说明适用版本 `v0.2.2`；质量报告见 `QUALITY-REPORT.md`。
+- **绑定地址**：本地体验用 `--host 127.0.0.1`（**默认已仅本机绑定**）；**不要**直接以 `0.0.0.0` 暴露公网。
 - **反向代理 + TLS**：对外服务置于 Nginx/Caddy 后并以 HTTPS 提供。
 - **鉴权**：在反向代理层加 BasicAuth / OAuth；API 建议 `limit_req` 限流。
 - **上传**：API 已内置大小上限与格式/时长/采样率校验。
 - **常驻**：systemd/launchd 管理；优雅退出自动释放后端资源（lifespan/`finally` close）。
-- **可追溯**：架构决策见 `docs/REFACTOR-001-audio-toolbox.md`（ADR-001~004 + 能力演进）。
+- **可追溯**：架构决策见 `docs/REFACTOR-001-audio-toolbox.md`（ADR-001~004 + 能力演进）；变更记录见 `CHANGELOG.md`。

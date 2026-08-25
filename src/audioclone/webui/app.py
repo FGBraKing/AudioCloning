@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 import time
+from typing import cast
 
 # 本地回环不受系统代理影响（在 gradio/httpx 等网络库导入前设置）
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
@@ -19,6 +20,7 @@ from audioclone.config import (
     GRADIO_HOST,
     GRADIO_MAX_QUEUE,
     GRADIO_PORT,
+    LOG_JSON,
     MAX_TEXT_LENGTH,
     MODEL_ID,
 )
@@ -30,10 +32,16 @@ from audioclone.core import (
     create_tts_backend,
     list_backend_capabilities,
 )
+from audioclone.core.capabilities import (
+    SpeechRecognitionCapability,
+    TextToSpeechCapability,
+)
+from audioclone.utils.logging_utils import configure_logging
 from audioclone.webui.components import (
     build_asr_tab,
     build_cross_lingual_tab,
     build_instruct_tab,
+    build_multitask_tab,
     build_system_status_panel,
     build_zero_shot_tab,
 )
@@ -41,6 +49,7 @@ from audioclone.webui.handlers import (
     make_asr_handler,
     make_cross_lingual_handler,
     make_instruct_handler,
+    make_multitask_handlers,
     make_zero_shot_handler,
 )
 
@@ -171,6 +180,30 @@ def build_ui(
                     ],
                 )
 
+            with gr.Tab("多任务实验台"):
+                mt = build_multitask_tab()
+                mt_handlers = make_multitask_handlers(cast(ModelBackend, engine.backend))
+                mt["t2a_generate"].click(
+                    fn=mt_handlers["t2a"],
+                    inputs=[mt["t2a_text"], mt["t2a_duration"]],
+                    outputs=[mt["t2a_output"]],
+                )
+                mt["a2a_generate"].click(
+                    fn=mt_handlers["a2a"],
+                    inputs=[mt["a2a_audio"], mt["a2a_instruct"]],
+                    outputs=[mt["a2a_output"]],
+                )
+                mt["cls_generate"].click(
+                    fn=mt_handlers["classify"],
+                    inputs=[mt["cls_audio"]],
+                    outputs=[mt["cls_output"]],
+                )
+                mt["vad_generate"].click(
+                    fn=mt_handlers["vad"],
+                    inputs=[mt["vad_audio"]],
+                    outputs=[mt["vad_output"]],
+                )
+
         gr.Markdown(
             "---\n"
             "### 📖 使用指南\n"
@@ -181,6 +214,7 @@ def build_ui(
             "| **跨语言合成** | 使用源语言音色合成目标语言语音，无需提供文本转录 |\n"
             "| **自然语言控制** | 通过指令控制语气/情感/语速，如“请用开心的语气说” |\n"
             "| **语音识别 (ASR)** | 上传或录制音频，转为文字，支持最长 5 分钟 |\n"
+            "| **多任务实验台** | T2A 生成 / A2A 变声 / 音频分类 / VAD，按后端能力可用（dummy-omni 全支持） |\n"
             "\n"
             "### 🎙️ 参考音频规格\n"
             "\n"
@@ -207,11 +241,7 @@ def build_ui(
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    configure_logging(json=LOG_JSON)
     parser = argparse.ArgumentParser(description="AudioCloning WebUI", prog="audioclone-webui")
     parser.add_argument("--port", type=int, default=GRADIO_PORT)
     parser.add_argument("--host", type=str, default=GRADIO_HOST)
@@ -240,7 +270,7 @@ def main() -> None:
         load_start = time.time()
         tts_backend.load()
         tts_load_sec = time.time() - load_start
-        engine = TTSService(tts_backend)
+        engine = TTSService(cast(TextToSpeechCapability, tts_backend))
         logger.info("TTS 服务就绪 (采样率 %s, 加载耗时 %.1fs)", engine.sample_rate, tts_load_sec)
 
         # 初始化 ASR 服务（后端经 model_loader 创建，默认 qwen3-asr-llama）
@@ -250,7 +280,7 @@ def main() -> None:
         if args.asr_model_dir is not None:
             asr_opts["model_dir"] = args.asr_model_dir
         asr_backend = create_asr_backend(**asr_opts)
-        asr_engine = ASRService(asr_backend)
+        asr_engine = ASRService(cast(SpeechRecognitionCapability, asr_backend))
         if not args.no_asr:
             if asr_engine.is_model_available:
                 logger.info("正在启动 ASR 服务 (%s)...", asr_backend.name)

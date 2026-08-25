@@ -9,11 +9,19 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from audioclone.config import MAX_TEXT_LENGTH, OUTPUT_DIR, OUTPUT_KEEP_MAX
+from audioclone.config import (
+    MAX_TEXT_LENGTH,
+    OUTPUT_DIR,
+    OUTPUT_KEEP_MAX,
+    TTS_NORMALIZE_LOUDNESS,
+    TTS_SEGMENT_GAP_SEC,
+)
 from audioclone.core.capabilities import TTS_MODES, TextToSpeechCapability
 from audioclone.core.exceptions import CapabilityError, InvalidAudioInput
 from audioclone.core.text import (
@@ -21,9 +29,24 @@ from audioclone.core.text import (
     TextSegmenter,
     normalize_text,
 )
-from audioclone.utils.audio import prune_outputs, save_audio
+from audioclone.utils.audio import loudness_normalize, prune_outputs, save_audio
 
 logger = logging.getLogger(__name__)
+
+
+def _concat_with_gap(segments: list[np.ndarray], gap_samples: int) -> np.ndarray:
+    """拼接音频段，并在段间插入 ``gap_samples`` 个静音样本（改善句间听感）。"""
+    if not segments:
+        return np.array([], dtype=np.float32)
+    if gap_samples <= 0 or len(segments) == 1:
+        return np.concatenate(segments)
+    silence = np.zeros(gap_samples, dtype=np.float32)
+    parts: list[np.ndarray] = []
+    for i, seg in enumerate(segments):
+        parts.append(seg)
+        if i < len(segments) - 1:
+            parts.append(silence)
+    return np.concatenate(parts)
 
 
 class TTSService:
@@ -87,6 +110,8 @@ class TTSService:
         instruct_text: str = "",
         speed: float = 1.0,
         filename: str | None = None,
+        progress_cb: Callable[[int, int], None] | None = None,
+        keep_segments: bool = False,
     ) -> str:
         """合成并保存到文件。
 
@@ -98,6 +123,8 @@ class TTSService:
             instruct_text: 指令文本
             speed: 语速 (0.5~2.0)
             filename: 输出文件名
+            progress_cb: 可选进度回调 ``(当前段号, 总段数)``，每段合成后调用
+            keep_segments: 是否将每一段单独落盘到 ``outputs/segments/``（便于调试/编辑）
 
         Returns:
             保存的音频文件路径
@@ -110,6 +137,8 @@ class TTSService:
             raise InvalidAudioInput("合成文本为空")
 
         logger.info("[TTS] 共 %d 段, 模式=%s", len(segments), mode)
+
+        base_stem = Path(filename).stem if filename else mode
         all_audio: list[np.ndarray] = []
 
         for idx, seg in enumerate(segments):
@@ -120,9 +149,16 @@ class TTSService:
                 audio = self.infer_cross_lingual(seg, ref_audio_path, speed)
             else:
                 audio = self.infer_instruct(seg, instruct_text, ref_audio_path, speed)
-            all_audio.append(audio)
 
-        final_audio = np.concatenate(all_audio)
+            if keep_segments:
+                self._save_segment(audio, idx + 1, base_stem)
+            all_audio.append(audio)
+            if progress_cb is not None:
+                progress_cb(idx + 1, len(segments))
+
+        final_audio = _concat_with_gap(all_audio, int(self.sample_rate * TTS_SEGMENT_GAP_SEC))
+        if TTS_NORMALIZE_LOUDNESS:
+            final_audio = loudness_normalize(final_audio, self.sample_rate)
 
         if not filename:
             ts = time.strftime("%Y%m%d_%H%M%S")
@@ -133,6 +169,15 @@ class TTSService:
 
         logger.info("[TTS] 合成完成 输出: %s", output_path)
         return output_path
+
+    @staticmethod
+    def _save_segment(audio: np.ndarray, index: int, stem: str) -> None:
+        """将单个分段落盘到 ``outputs/segments/<stem>_seg_<NN>.wav``。"""
+        seg_dir = OUTPUT_DIR / "segments"
+        seg_dir.mkdir(parents=True, exist_ok=True)
+        path = str(seg_dir / f"{stem}_seg_{index:02d}.wav")
+        save_audio(audio, path)
+        logger.info("    已落盘分段: %s", path)
 
     def get_device_info(self) -> dict[str, Any]:
         """获取当前模型状态信息。"""

@@ -21,13 +21,16 @@ import soundfile as sf
 from audioclone.config import (
     ASR_CTX_SIZE,
     ASR_HTTP_TIMEOUT,
+    ASR_MAX_SEGMENT_SEC,
     ASR_MODEL_DIR,
+    ASR_MODEL_ID,
     ASR_N_GPU_LAYERS,
     ASR_READY_TIMEOUT,
     ASR_SAMPLE_RATE,
     ASR_SERVER_HOST,
     ASR_SERVER_PORT,
-    OUTPUT_DIR,
+    LOGS_DIR,
+    ensure_logs_dir,
 )
 from audioclone.core.capabilities import ModelBackend, SpeechRecognitionCapability
 from audioclone.utils.audio import resample_audio
@@ -43,11 +46,13 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
     def __init__(
         self,
         model_dir: str | Path | None = None,
+        model_id: str | None = None,
         host: str = ASR_SERVER_HOST,
         port: int = ASR_SERVER_PORT,
-        max_segment_sec: float = 60.0,
+        max_segment_sec: float = ASR_MAX_SEGMENT_SEC,
     ) -> None:
         self.model_dir = Path(model_dir) if model_dir else ASR_MODEL_DIR
+        self.model_id = model_id or ASR_MODEL_ID
         self.host = host
         self.port = port
         self.base_url = f"http://{self.host}:{self.port}"
@@ -123,8 +128,8 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         ]
 
         # 输出重定向到日志文件，避免 PIPE 缓冲填满阻塞子进程
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        self._log_path = OUTPUT_DIR / "asr_llama_server.log"
+        ensure_logs_dir()
+        self._log_path = LOGS_DIR / "asr_llama_server.log"
         self._log_handle = open(self._log_path, "a", encoding="utf-8")  # noqa: SIM115
 
         logger.info("[ASR] 启动 llama-server: %s", " ".join(cmd))

@@ -13,23 +13,34 @@ import logging
 import os
 import tempfile
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import uvicorn
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 # 本地回环不受系统代理影响（在 httpx/gradio 等网络库导入前设置）
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
-from audioclone.config import ALLOWED_UPLOAD_EXT, MAX_TEXT_LENGTH, MAX_UPLOAD_BYTES, MODEL_ID
+from audioclone.api.metrics import metrics
+from audioclone.config import (
+    ALLOWED_UPLOAD_EXT,
+    LOG_JSON,
+    MAX_TEXT_LENGTH,
+    MAX_UPLOAD_BYTES,
+    MODEL_ID,
+)
 from audioclone.core import TTSService, create_tts_backend
 from audioclone.core.capabilities import TextToSpeechCapability
 from audioclone.core.exceptions import InvalidAudioInput, ModelLoadError
 from audioclone.utils.audio import assert_valid_ref_audio
+from audioclone.utils.logging_utils import configure_logging
+from audioclone.utils.validation import assert_tts_text, assert_valid_mode
 
 logger = logging.getLogger(__name__)
 
@@ -75,18 +86,20 @@ app = FastAPI(
 
 @app.middleware("http")
 async def _request_log(request: Request, call_next):
-    """请求日志：记录方法、路径、状态码与耗时。"""
-    import time as _time
-
-    start = _time.time()
+    """请求日志：记录方法、路径、状态码与耗时；注入 trace_id 并采集指标。"""
+    trace_id = uuid.uuid4().hex[:12]
+    start = time.time()
     response = await call_next(request)
-    elapsed = _time.time() - start
+    elapsed = time.time() - start
+    response.headers["X-Request-ID"] = trace_id
+    metrics.inc_request(request.url.path, response.status_code)
     logger.info(
         "HTTP %s %s -> %s (%.0fms)",
         request.method,
         request.url.path,
         response.status_code,
         elapsed * 1000,
+        extra={"trace_id": trace_id},
     )
     return response
 
@@ -109,9 +122,6 @@ async def _model_error_handler(request: Request, exc: ModelLoadError):
 
 
 async def _json_error(status: int, detail: str):
-    from fastapi.encoders import jsonable_encoder
-    from fastapi.responses import JSONResponse
-
     return JSONResponse(status_code=status, content=jsonable_encoder({"detail": detail}))
 
 
@@ -128,11 +138,10 @@ async def health(request: Request) -> dict[str, Any]:
     }
 
 
-def _validate_text(text: str) -> None:
-    if not text or not text.strip():
-        raise InvalidAudioInput("合成文本为空")
-    if len(text) > MAX_TEXT_LENGTH:
-        raise InvalidAudioInput(f"文本过长 (最大 {MAX_TEXT_LENGTH} 字符)")
+@app.get("/api/metrics")
+def metrics_endpoint() -> Response:
+    """Prometheus 风格进程内指标（请求计数 / 合成耗时 / 运行时长）。"""
+    return Response(content=metrics.render(), media_type="text/plain")
 
 
 def _save_upload(upload: UploadFile) -> str:
@@ -182,9 +191,8 @@ def clone_voice(
     engine: TTSService = Depends(_get_engine),
 ) -> FileResponse:
     """声音克隆接口（普通 def，由线程池执行，不阻塞事件循环）。"""
-    _validate_text(text)
-    if mode not in VALID_MODES:
-        raise InvalidAudioInput(f"不支持的模式: {mode}")
+    assert_tts_text(text, MAX_TEXT_LENGTH)
+    assert_valid_mode(mode, VALID_MODES)
     if mode == "instruct" and not instruct_text.strip():
         raise InvalidAudioInput("instruct 模式需提供 instruct_text")
 
@@ -205,6 +213,7 @@ def clone_voice(
             speed=speed,
         )
         elapsed = time.time() - start
+        metrics.record_synthesis(elapsed)
 
         return FileResponse(
             output_path,
@@ -224,14 +233,15 @@ def clone_voice(
 
 
 def main() -> None:
+    configure_logging(json=LOG_JSON)
     parser = argparse.ArgumentParser(description="AudioCloning API Server", prog="audioclone-api")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址（默认仅本机）")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    # log_config=None：不覆盖上方 configure_logging 已配置的处理器
+    uvicorn.run(app, host=args.host, port=args.port, log_config=None)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     main()

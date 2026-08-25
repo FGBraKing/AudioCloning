@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -17,12 +18,13 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
     """基于 mlx_audio 的 CosyVoice3 MLX 合成后端。"""
 
     name = "cosyvoice3-mlx"
+    capabilities = (TextToSpeechCapability,)
 
     def __init__(self, model_id: str | None = None, model_dir: str | Path | None = None) -> None:
         self.model_id = model_id or MODEL_ID
         self.model_dir = Path(model_dir) if model_dir else MODEL_DIR
-        self._model = None
-        self.sample_rate = SAMPLE_RATE  # 未加载时默认，加载后以模型报告为准
+        self._model: Any = None
+        self.sample_rate: int = SAMPLE_RATE  # 未加载时默认，加载后以模型报告为准
 
     # ─── 生命周期 ────────────────────────────────────────────
     def load(self) -> None:
@@ -32,7 +34,7 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
 
         logger.info("[TTS] 加载模型: %s", self.model_dir)
         self._model = mlx_load_model(self.model_dir)
-        self.sample_rate = getattr(self._model, "sample_rate", SAMPLE_RATE)
+        self.sample_rate = int(getattr(self._model, "sample_rate", SAMPLE_RATE))
         logger.info("[TTS] CosyVoice3 MLX 加载完成，采样率: %s", self.sample_rate)
 
     def close(self) -> None:
@@ -51,7 +53,7 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
         self.load()
         ref_audio = self._load_ref_audio(ref_audio_path)
 
-        kwargs: dict = {"speed": speed, "stt_model": None, "verbose": False}
+        kwargs: dict[str, Any] = {"speed": speed, "stt_model": None, "verbose": False}
         if mode == "zero_shot":
             kwargs.update({"ref_text": ref_text if ref_text else None})
         elif mode == "cross_lingual":
@@ -65,8 +67,8 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
         result = next(self._model.generate(text=text, ref_audio=ref_audio, **kwargs))
         return np.array(result.audio)
 
-    def _load_ref_audio(self, ref_audio_path: str):
-        """读取参考音频并重采样到目标采样率，返回 mx.array。"""
+    def _load_ref_audio(self, ref_audio_path: str) -> Any:
+        """读取参考音频并重采样到目标采样率，返回 ``mlx.core.array``。"""
         import mlx.core as mx
         import soundfile as sf
 
