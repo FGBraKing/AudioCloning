@@ -72,10 +72,9 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
         import mlx.core as mx
         import soundfile as sf
 
-        from audioclone.utils.audio import resample_audio
+        from audioclone.utils.audio import resample_audio, to_mono
 
         data, sr = sf.read(ref_audio_path, dtype="float32")
-        if data.ndim > 1:  # 多声道取第一声道
-            data = data[:, 0]
+        data = to_mono(data)  # 多声道取第一声道（统一声道策略）
         data = resample_audio(data, int(sr), self.sample_rate)
         return mx.array(data)

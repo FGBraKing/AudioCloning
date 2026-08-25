@@ -13,6 +13,18 @@ from audioclone.config import REF_AUDIO_MAX_SEC, REF_AUDIO_MIN_SEC, REF_AUDIO_MI
 logger = logging.getLogger(__name__)
 
 
+def to_mono(data: np.ndarray, mode: str = "first") -> np.ndarray:
+    """多声道转单声道：``mode='first'`` 取第一声道（默认）；``mode='mean'`` 取声道均值。
+
+    统一各后端/工具的声道策略（CosyVoice 与 Qwen3-ASR 均走此助手）；单声道原样返回。
+    """
+    if data.ndim <= 1:
+        return data
+    if mode == "mean":
+        return data.mean(axis=1)
+    return data[:, 0]
+
+
 def validate_ref_audio(path: str) -> tuple[bool, str]:
     """校验参考音频是否合法，返回 ``(is_valid, message)``。
 

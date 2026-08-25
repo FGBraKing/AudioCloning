@@ -88,42 +88,13 @@ def test_clone_bad_mode(client):
     assert "不支持的模式" in resp.json()["detail"]
 
 
-def test_clone_rejects_bad_format(client):
+def test_clone_rejects_invalid_audio(client):
     resp = client.post(
         "/api/clone",
         data={"text": "hi"},
-        files={"ref_audio": ("a.mp4", io.BytesIO(b"nope"), "video/mp4")},
+        files={"ref_audio": ("bad.wav", io.BytesIO(b"not audio"), "audio/wav")},
     )
-    assert resp.status_code == 400
-    assert "不支持的音频格式" in resp.json()["detail"]
-
-
-@pytest.fixture(scope="module")
-def broken_client():
-    """注入一个合成时抛异常的后端，用于验证 500 通用错误路径。"""
-    from audioclone.api import server
-    from audioclone.core.backends.dummy import DummyTTSBackend
-
-    class BrokenBackend(DummyTTSBackend):
-        name = "broken"
-
-        def synthesize(self, *args, **kwargs):
-            raise RuntimeError("boom")
-
-    engine = TTSService(BrokenBackend(sample_rate=24000))
-
-    original_lifespan = server.app.router.lifespan_context
-
-    @asynccontextmanager
-    async def fake_lifespan(app):
-        app.state.engine = engine
-        app.state.backend = engine.backend
-        yield
-
-    server.app.router.lifespan_context = fake_lifespan
-    with TestClient(server.app) as c:
-        yield c
-    server.app.router.lifespan_context = original_lifespan
+    assert resp.status_code == 400  # 时长校验失败
 
 
 def test_metrics(client):
@@ -165,14 +136,28 @@ def test_clone_upload_too_large(client, monkeypatch):
     assert "上传文件过大" in resp.json()["detail"]
 
 
-def test_clone_internal_error(broken_client):
-    resp = broken_client.post(
-        "/api/clone",
-        data={"text": "hi"},
-        files=_upload(_make_wav_bytes()),
-    )
-    assert resp.status_code == 500
-    assert "boom" in resp.json()["detail"]
+def test_clone_internal_error(client):
+    """合成抛通用异常 → 500（临时替换为损坏后端，避免污染共享 client）。"""
+    from audioclone.core.backends.dummy import DummyTTSBackend
+
+    class BrokenBackend(DummyTTSBackend):
+        name = "broken"
+
+        def synthesize(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    saved = client.app.state.engine
+    client.app.state.engine = TTSService(BrokenBackend(sample_rate=24000))
+    try:
+        resp = client.post(
+            "/api/clone",
+            data={"text": "hi"},
+            files=_upload(_make_wav_bytes()),
+        )
+        assert resp.status_code == 500
+        assert "boom" in resp.json()["detail"]
+    finally:
+        client.app.state.engine = saved
 
 
 def test_clone_backend_unavailable_503(client):
@@ -189,3 +174,32 @@ def test_clone_backend_unavailable_503(client):
         assert "未就绪" in resp.json()["detail"]
     finally:
         client.app.state.engine = saved
+
+
+def test_list_outputs_after_clone(client, tmp_path, monkeypatch):
+    """/api/outputs 返回历史输出（含时长元数据）。"""
+    from audioclone.api import server
+
+    monkeypatch.setattr("audioclone.core.service.tts_service.OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path)
+
+    resp = client.post("/api/clone", data={"text": "hi"}, files=_upload(_make_wav_bytes()))
+    assert resp.status_code == 200
+
+    resp = client.get("/api/outputs")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] >= 1
+    wavs = [f for f in body["files"] if f["name"].endswith(".wav")]
+    assert wavs
+    assert "duration_sec" in wavs[0]
+    assert wavs[0]["duration_sec"] > 0
+
+
+def test_list_outputs_empty(client, tmp_path, monkeypatch):
+    from audioclone.api import server
+
+    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path)  # 空目录
+    resp = client.get("/api/outputs")
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 0

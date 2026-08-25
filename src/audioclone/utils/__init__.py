@@ -10,6 +10,7 @@ from audioclone.utils.audio import (
     resample_audio,
     sanitize_audio,
     save_audio,
+    to_mono,
     validate_ref_audio,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "resample_audio",
     "sanitize_audio",
     "save_audio",
+    "to_mono",
     "validate_ref_audio",
 ]

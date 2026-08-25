@@ -10,6 +10,7 @@ from audioclone.utils.audio import (
     prune_outputs,
     resample_audio,
     sanitize_audio,
+    to_mono,
     validate_ref_audio,
 )
 
@@ -136,3 +137,23 @@ def test_validate_ref_audio_too_short(tmp_path):
 def test_validate_ref_audio_valid(tmp_path):
     ok, _ = validate_ref_audio(_make_wav(tmp_path / "ok.wav"))
     assert ok
+
+
+# ─── to_mono 声道统一 ───────────────────────────────────────
+def test_to_mono_passthrough():
+    x = np.ones(100, dtype=np.float32)
+    assert to_mono(x) is x
+
+
+def test_to_mono_first_channel_default():
+    stereo = np.stack([np.ones(100) * 0.3, np.ones(100) * 0.9], axis=1).astype(np.float32)
+    mono = to_mono(stereo)
+    assert mono.ndim == 1
+    assert np.allclose(mono, 0.3)
+
+
+def test_to_mono_mean_mode():
+    stereo = np.stack([np.ones(100) * 0.3, np.ones(100) * 0.9], axis=1).astype(np.float32)
+    mono = to_mono(stereo, mode="mean")
+    assert mono.ndim == 1
+    assert np.allclose(mono, 0.6)

@@ -34,7 +34,7 @@ from audioclone.config import (
     ensure_logs_dir,
 )
 from audioclone.core.capabilities import ModelBackend, SpeechRecognitionCapability
-from audioclone.utils.audio import resample_audio
+from audioclone.utils.audio import resample_audio, to_mono
 
 logger = logging.getLogger(__name__)
 
@@ -265,8 +265,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
     def _load_audio_array(self, audio_path: str) -> np.ndarray:
         """读取音频为 16kHz mono float32 数组（重采样）。"""
         data, sr = sf.read(audio_path, dtype="float32")
-        if data.ndim > 1:
-            data = data.mean(axis=1)
+        data = to_mono(data)  # 统一声道策略：取第一声道
         return resample_audio(data, int(sr), ASR_SAMPLE_RATE)
 
     def _chunk_audio(self, data: np.ndarray) -> list[np.ndarray]:

@@ -6,8 +6,18 @@
 ## [Unreleased]
 
 ### 计划
-- 接入 T2A / A2A / 音频分类 / VAD 真实后端（v0.3.0）
-- 剩余 P2：`/api/outputs` 接口、UploadFile 小文件直读、声道统一 `to_mono`
+- 接入 T2A / A2A / 音频分类 / VAD 真实后端（v0.3.0，需真实模型）
+
+## [v0.2.4] - 2026-08-26
+
+### P2 完善（相对 v0.2.3）
+- 新增 `GET /api/outputs` 历史输出接口（名称/路径/字节/修改时间/时长，含 `segments/` 子目录）
+- 上传小文件内存直读 fast path（`AUDIOCLONE_MAX_INLINE_UPLOAD_BYTES`，默认 8MB）
+- 声道统一：新增 `utils.audio.to_mono(data, mode)`，CosyVoice 与 Qwen3-ASR 统一取第一声道
+- 多进程指标方案文档化（`api/metrics.py`）；USER-GUIDE 新增 `/api/outputs` 说明
+
+### 文档
+- `QUALITY-REPORT.md` 第四轮复审（适用 v0.2.4，§9 P0/P1/P2 大部分实施记录）
 
 ## [v0.2.3] - 2026-08-26
 

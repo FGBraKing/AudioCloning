@@ -2,7 +2,11 @@
 
 经 ``/api/metrics`` 暴露：HTTP 请求计数（按 path/status）、合成次数/耗时与直方图、
 进程运行时长。无需外部依赖；如需接入真实 Prometheus 可替换为此实现。
-注意：多进程部署下各进程独立计数（进程内单例）。
+
+**多进程部署说明**：本实现为进程内单例，多 worker（如 ``uvicorn --workers N``）下各进程
+独立计数。如需聚合，建议：1) 每个 worker 暴露独立端口由 Prometheus 分别抓取后聚合；
+2) 或引入 `prometheus-client <https://github.com/prometheus/client_python>`_ 的多进程模式
+（``PROMETHEUS_MULTIPROC_DIR``）；3) 或经 Pushgateway 汇总。
 """
 
 from __future__ import annotations

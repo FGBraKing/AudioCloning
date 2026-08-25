@@ -32,14 +32,16 @@ from audioclone.api.metrics import metrics
 from audioclone.config import (
     ALLOWED_UPLOAD_EXT,
     LOG_JSON,
+    MAX_INLINE_UPLOAD_BYTES,
     MAX_TEXT_LENGTH,
     MAX_UPLOAD_BYTES,
     MODEL_ID,
+    OUTPUT_DIR,
 )
 from audioclone.core import TTSService, create_tts_backend
 from audioclone.core.capabilities import TextToSpeechCapability
 from audioclone.core.exceptions import BackendUnavailable, InvalidAudioInput, ModelLoadError
-from audioclone.utils.audio import assert_valid_ref_audio
+from audioclone.utils.audio import assert_valid_ref_audio, get_audio_duration
 from audioclone.utils.logging_utils import configure_logging, set_trace_id
 from audioclone.utils.validation import assert_tts_text, assert_valid_mode
 
@@ -158,8 +160,44 @@ def metrics_endpoint() -> Response:
     return Response(content=metrics.render(), media_type="text/plain")
 
 
+@app.get("/api/outputs")
+def list_outputs(limit: int = 50) -> dict[str, Any]:
+    """列出历史输出音频（含 ``segments/`` 子目录），按修改时间倒序。
+
+    Args:
+        limit: 最多返回条数（默认 50）。
+    """
+    if not OUTPUT_DIR.exists():
+        return {"count": 0, "files": []}
+
+    files: list[dict[str, Any]] = []
+    for p in sorted(OUTPUT_DIR.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
+        if len(files) >= limit:
+            break
+        if not p.is_file() or p.suffix.lower() not in ALLOWED_UPLOAD_EXT:
+            continue
+        try:
+            stat = p.stat()
+            files.append(
+                {
+                    "name": p.name,
+                    "path": str(p.relative_to(OUTPUT_DIR)),
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
+                    "duration_sec": round(get_audio_duration(str(p)), 2),
+                }
+            )
+        except OSError:
+            continue
+    return {"count": len(files), "files": files}
+
+
 def _save_upload(upload: UploadFile) -> str:
-    """将上传音频安全落盘为临时文件；流式限制大小、校验扩展名。"""
+    """将上传音频安全落盘为临时文件；限制大小、校验扩展名。
+
+    小文件（≤ ``AUDIOCLONE_MAX_INLINE_UPLOAD_BYTES``）一次读入内存后单次写入，
+    减少分块 IO；大文件按 1MB 分块流式写入，内存可控。
+    """
     filename = upload.filename or "upload.wav"
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_UPLOAD_EXT:
@@ -175,17 +213,24 @@ def _save_upload(upload: UploadFile) -> str:
 
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
-        written = 0
-        while True:
-            chunk = upload.file.read(1024 * 1024)
-            if not chunk:
-                break
-            written += len(chunk)
-            if written > MAX_UPLOAD_BYTES:
-                raise InvalidAudioInput(
-                    f"上传文件过大，上限 {MAX_UPLOAD_DISPLAY}"
-                )
-            tmp.write(chunk)
+        # 小文件内存直读：一次读入，单次落盘
+        if size is not None and size <= MAX_INLINE_UPLOAD_BYTES:
+            data = upload.file.read()
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise InvalidAudioInput(f"上传文件过大，上限 {MAX_UPLOAD_DISPLAY}")
+            tmp.write(data)
+        else:
+            written = 0
+            while True:
+                chunk = upload.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise InvalidAudioInput(
+                        f"上传文件过大，上限 {MAX_UPLOAD_DISPLAY}"
+                    )
+                tmp.write(chunk)
     except Exception:
         tmp.close()
         os.unlink(tmp.name)

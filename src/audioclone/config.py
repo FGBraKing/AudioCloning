@@ -81,6 +81,7 @@ class Settings(BaseSettings):
 
     # ── 上传 / 资源限流 ────────────────────────────────────
     max_upload_bytes: int = 100 * 1024 * 1024   # 上传音频最大字节数
+    max_inline_upload_bytes: int = 8 * 1024 * 1024  # 小文件一次读入内存的阈值（减少分块 IO）
 
     # ── 输出目录保留上限（<=0 表示不清理） ──────────────────
     output_keep_max: int = 0
@@ -120,6 +121,7 @@ ASR_MAX_SEGMENT_SEC = settings.asr_max_segment_sec
 ASR_CHUNK_OVERLAP_SEC = settings.asr_chunk_overlap_sec
 
 MAX_UPLOAD_BYTES = settings.max_upload_bytes
+MAX_INLINE_UPLOAD_BYTES = settings.max_inline_upload_bytes
 OUTPUT_KEEP_MAX = settings.output_keep_max
 
 TTS_BACKEND = settings.tts_backend

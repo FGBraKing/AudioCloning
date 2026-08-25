@@ -2,10 +2,10 @@
 
 | 元信息 | 值 |
 |--------|----|
-| 文档版本 | 1.2 |
-| **适用版本** | **v0.2.3** |
+| 文档版本 | 1.3 |
+| **适用版本** | **v0.2.4** |
 | 文档类型 | 使用说明（安装 / 配置 / 能力使用 / API / 扩展 / 故障排查 / 部署） |
-| 创建日期 | 2026-08-25（v0.2.3 修订 2026-08-26） |
+| 创建日期 | 2026-08-25（v0.2.4 修订 2026-08-26） |
 | 配套文档 | `QUALITY-REPORT.md`、`REFACTOR-001-audio-toolbox.md`、`README.md` |
 
 ---
@@ -74,6 +74,7 @@ brew install llama.cpp
 | `AUDIOCLONE_ASR_AUDIO_MAX_SEC` / `SAMPLE_RATE` / `MAX_SEGMENT_SEC` | `300` / `16000` / `60` | ASR 时长/采样率/分片阈值 |
 | `AUDIOCLONE_ASR_HTTP_TIMEOUT` / `READY_TIMEOUT` | `120.0` / `60.0` | ASR HTTP / 就绪等待超时（秒） |
 | `AUDIOCLONE_MAX_UPLOAD_BYTES` | `104857600`(100MB) | API 上传音频大小上限 |
+| `AUDIOCLONE_MAX_INLINE_UPLOAD_BYTES` | `8388608`(8MB) | 小文件一次读入内存的阈值（减少分块 IO） |
 | `AUDIOCLONE_OUTPUT_KEEP_MAX` | `0` | 输出目录保留文件数（`<=0` 不清理） |
 | `AUDIOCLONE_TTS_NORMALIZE_LOUDNESS` | `false` | 落盘前按 EBU R128 响度归一化 |
 | `AUDIOCLONE_TTS_SEGMENT_GAP_SEC` | `0.15` | 长文本分段间插入静音（秒） |
@@ -208,9 +209,17 @@ curl -X POST http://127.0.0.1:8000/api/clone \
 GET /api/metrics
 ```
 Prometheus 文本格式：`audioclone_requests_total{path,status}`、`audioclone_synthesis_count_total`、
-`audioclone_synthesis_seconds_total`、`audioclone_uptime_seconds`。
+`audioclone_synthesis_seconds_total`、`audioclone_synthesis_duration_seconds_bucket{le=...}`（直方图）、
+`audioclone_uptime_seconds`。指标为进程内单例，多 worker 部署需按进程聚合（见 `api/metrics.py` 说明）。
 
-### 7.4 错误响应
+### 7.4 历史输出
+
+```
+GET /api/outputs?limit=50
+```
+按修改时间倒序列出历史输出音频（含 `segments/` 子目录），返回 `count` 与 `files`（名称 / 相对路径 / 字节数 / 修改时间 / 时长秒）。
+
+### 7.5 错误响应
 
 | 场景 | 状态码 | 说明 |
 |------|:---:|------|
@@ -315,7 +324,7 @@ uv run pytest                                      # 含集成（缺模型自动
 
 ## 12. 生产与部署护栏（重要）
 
-- **版本**：当前仓库基线 `0.2.3`（单一来源 `audioclone.__version__`）；本使用说明适用版本 `v0.2.3`；质量报告见 `QUALITY-REPORT.md`。
+- **版本**：当前仓库基线 `0.2.4`（单一来源 `audioclone.__version__`）；本使用说明适用版本 `v0.2.4`；质量报告见 `QUALITY-REPORT.md`。
 - **绑定地址**：本地体验用 `--host 127.0.0.1`（**默认已仅本机绑定**）；**不要**直接以 `0.0.0.0` 暴露公网。
 - **反向代理 + TLS**：对外服务置于 Nginx/Caddy 后并以 HTTPS 提供。
 - **鉴权**：在反向代理层加 BasicAuth / OAuth；API 建议 `limit_req` 限流。
