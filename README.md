@@ -1,4 +1,4 @@
-# AudioCloning — 音频模型体验工具箱 (v0.2.5)
+# AudioCloning — 音频模型体验工具箱 (v0.2.6)
 
 一个**模型可替换**的本地音频体验工具。内置基于 **Fun-CosyVoice3-0.5B (MLX)** 的语音合成/克隆
 与基于 **Qwen3-ASR** 的语音识别，运行于 Apple Silicon。功能框架（WebUI / REST API / 流程编排）与

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
 import re
 import shutil
@@ -37,6 +38,27 @@ from audioclone.core.capabilities import ModelBackend, SpeechRecognitionCapabili
 from audioclone.utils.audio import resample_audio, to_mono
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json_text(raw: str) -> str | None:
+    """尝试从输出中提取 JSON 载荷的文本字段（如 ``{"text": ...}`` / ``{"transcript": ...}``）。
+
+    非 JSON 或未命中文本字段时返回 None（交由上层正则兜底）。
+    """
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        obj = json.loads(raw[start : end + 1])
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(obj, dict):
+        for key in ("text", "asr_text", "content", "transcript"):
+            value = obj.get(key)
+            if isinstance(value, str):
+                return value
+    return None
 
 
 class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
@@ -296,10 +318,27 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
 
     @staticmethod
     def _parse_asr_output(raw: str) -> str:
-        match = re.search(r"<asr_text>(.*)", raw, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        cleaned = re.sub(r"^language\s+\w+\s*", "", raw)
+        """从模型输出解析识别文本（优先结构化，正则兜底）。
+
+        依次尝试：
+        1) 闭合的 ``<asr_text>...</asr_text>`` 标签对（最精确）；
+        2) JSON 载荷中的文本字段（如 ``{"text": ...}`` / ``{"transcript": ...}``）；
+        3) 开标签截断（无闭合标签的兼容路径）；
+        4) 清理 ``language: xx`` 前缀后返回原文。
+        """
+        pair = re.search(r"<asr_text>(.*?)</asr_text>", raw, re.DOTALL)
+        if pair:
+            return pair.group(1).strip()
+
+        json_text = _extract_json_text(raw)
+        if json_text is not None:
+            return json_text.strip()
+
+        open_tag = re.search(r"<asr_text>(.*)", raw, re.DOTALL)
+        if open_tag:
+            return open_tag.group(1).strip()
+
+        cleaned = re.sub(r"^language\s*:?\s*\w+\s*", "", raw)
         return cleaned.strip() or raw
 
     # ─── 状态 ────────────────────────────────────────────────

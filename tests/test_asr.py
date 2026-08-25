@@ -53,6 +53,43 @@ def test_chunk_audio_overlap_and_tail_dedup():
     assert sum(len(c) for c in chunks) >= len(data)
 
 
+# ─── ASR 输出结构化解析 ─────────────────────────────────────
+def test_parse_asr_closed_tag_pair():
+    from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
+
+    raw = "language: Chinese\n<asr_text>你好世界</asr_text><|end_turn|>"
+    assert Qwen3AsrLlamaBackend._parse_asr_output(raw) == "你好世界"
+
+
+def test_parse_asr_json_payload():
+    from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
+
+    assert Qwen3AsrLlamaBackend._parse_asr_output('{"text": "结构化识别结果"}') == "结构化识别结果"
+
+
+def test_parse_asr_open_tag_fallback():
+    from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
+
+    raw = "language: zh\n<asr_text>未闭合文本 尾部"
+    assert Qwen3AsrLlamaBackend._parse_asr_output(raw) == "未闭合文本 尾部"
+
+
+def test_parse_asr_language_prefix_cleanup():
+    from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
+
+    raw = "language: Chinese\n无标签文本"
+    assert Qwen3AsrLlamaBackend._parse_asr_output(raw) == "无标签文本"
+
+
+def test_extract_json_text_helper():
+    from audioclone.core.backends.qwen3_asr_llama import _extract_json_text
+
+    assert _extract_json_text('{"text": "x"}') == "x"
+    assert _extract_json_text('{"transcript": "y"}') == "y"
+    assert _extract_json_text("not json at all") is None
+    assert _extract_json_text('{"no_field": 1}') is None
+
+
 @pytest.mark.integration
 def test_asr_roundtrip(asr_ready: bool):
     if not asr_ready:

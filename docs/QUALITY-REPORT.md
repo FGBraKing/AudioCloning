@@ -2,10 +2,10 @@
 
 | 元信息 | 值 |
 |--------|----|
-| 文档版本 | 4.1 |
-| **适用版本** | **v0.2.5** |
+| 文档版本 | 4.3 |
+| **适用版本** | **v0.2.6** |
 | 分析基线 | 代码基线 v0.2.4（tag v0.2.4；§9 P0/P1/P2 大部分已实施） |
-| 复审轮次 | 第五轮（迭代复审）；§9 P1 全部 + P2 部分已实施落地 |
+| 复审轮次 | 第五轮（迭代复审）；§9 P1 全部 + P2 全部（除真实后端）已实施落地 |
 | 文档类型 | 架构 / 代码质量分析报告 |
 | 分析视角 | 架构、Python 工程、深度学习音频领域 |
 | 创建日期 | 2026-08-26 |
@@ -20,19 +20,19 @@
 registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归清理、trace_id 贯穿、未就绪 503、
 `/api/outputs`、小文件内存直读、`to_mono` 声道统一、108 测试 + 75% 覆盖 + 真实模型集成回归。
 
-**结论：架构评分保持「优秀」，本轮 P0 = 无**。本报告 §9 的 **P1 全部 4 项 + P2 部分已实施落地**
+**结论：架构评分保持「优秀」，本轮 P0 = 无**。本报告 §9 的 **P1 全部 4 项 + P2 全部（除真实后端）已实施落地**
 （trace_id 日志缺陷修复、inline 上传内存安全、`/api/outputs` limit/ISO/跳过时长、多任务校验口径独立、
-`registry.create` 能力 fail-fast、Metrics buckets 可配置、入口/暴露面文档化）。剩余 P2 项
-（ASR 输出结构化解析、真实模型后端）留待后续。
+`registry.create` 能力 fail-fast、Metrics buckets 可配置、ASR 输出结构化解析、入口/暴露面文档化）。
+剩余 P2 仅「真实模型后端接入」（v0.3.0 路线）。
 
 | 维度 | 评分（5 星） | 一句话总评 |
 |------|:---:|------------|
 | 架构分层与可扩展性 | ★★★★★ | 能力驱动四层稳固；registry 单池 + 别名层清晰 |
-| 代码质量（类型/命名/模块化） | ★★★★★ | mypy 全量 0 errors、ruff 全绿、版本单一来源 0.2.5 |
+| 代码质量（类型/命名/模块化） | ★★★★★ | mypy 全量 0 errors、ruff 全绿、版本单一来源 0.2.6 |
 | 异步/并发正确性 | ★★★★★ | 线程池 + RLock；采样率实时读取；trace_id 贯穿（含缺陷见 §3.3） |
-| 音频信号处理专业性 | ★★★★☆ | 数值安全 + 因果重采样 + 分片重叠 + to_mono；ASR 输出解析待结构化 |
+| 音频信号处理专业性 | ★★★★☆ | 数值安全 + 因果重采样 + 分片重叠 + to_mono + ASR 结构化解析 |
 | 安全性 | ★★★☆☆ | 上传限流/内容校验就位；鉴权/HTTPS 与 `/api/outputs` 暴露面待部署护栏 |
-| 测试与质量保障 | ★★★★★ | 117 测试 + 77% 覆盖 + 契约测试 + 真实模型集成回归 |
+| 测试与质量保障 | ★★★★★ | 122 测试 + 77% 覆盖 + 契约测试 + 真实模型集成回归 |
 | 可维护性与可追溯 | ★★★★★ | 版本单一来源；trace_id 贯穿；文档/ADR/CI 齐全 |
 
 ---
@@ -92,7 +92,7 @@ registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归�
 | 项 | 现状 | 建议 |
 |----|------|------|
 | **多任务校验口径（P1）** | ✅ 新增 `assert_audio_duration(path, max_sec)`（[audio.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/utils/audio.py#L64-L78)），A2A/分类/VAD 使用 `ASR_AUDIO_MAX_SEC`（300s），独立于 TTS 参考音频（1~30s） | 有专项测试 |
-| **ASR 输出解析脆弱** | `_parse_asr_output` 正则 `<asr_text>` + 语言前缀清理兜底（[qwen3_asr_llama.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/core/backends/qwen3_asr_llama.py#L298-L304)） | 优先结构化（llama-server JSON），正则兜底（低优先级） |
+| **ASR 输出解析脆弱** | ✅ 已结构化：闭合 `<asr_text>...</asr_text>` 标签对 → JSON 载荷文本字段（`text/asr_text/content/transcript`）→ 开标签 → 语言前缀清理（[qwen3_asr_llama.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/core/backends/qwen3_asr_llama.py#L42-L60)） | 有专项测试 |
 | **`/api/outputs` 时长开销** | 逐文件 `get_audio_duration`（读头）O(n)（[server.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/api/server.py#L186-L188)） | 大目录可跳过 duration 或延迟计算（P2） |
 
 ---
@@ -134,21 +134,21 @@ registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归�
 | WebUI handler | `test_webui_handlers.py`（成功/错误/多任务） | ✅ |
 | 可观测 | `test_observability.py`（JsonFormatter/metrics/env 覆盖） | ✅ |
 | 集成 | `test_tts/asr/roundtrip`（真实模型，本机已回归） | ✅ |
-| 覆盖率 | **76.69%**（门槛 60%） | ✅ |
+| 覆盖率 | **77.28%**（门槛 60%） | ✅ |
 | 类型 | mypy 0 errors（全量 39 文件） | ✅ |
 
 **已落实（v0.2.5）：**
 1. inline 上传分支单测（小文件缓冲 / 伪造 `size` 转流式）。
 2. `/api/outputs` 的 `limit` 钳制与 `include_duration`/ISO 测试。
 3. `TraceIdFilter` 保留显式 extra + 上下文注入；API 请求日志 trace_id 捕获回归测试。
-4. `assert_audio_duration` 多任务口径；`Metrics(buckets=...)` 自定义桶；`registry.create` 能力 fail-fast。
+4. `assert_audio_duration` 多任务口径；`Metrics(buckets=...)` 自定义桶；`registry.create` 能力 fail-fast；ASR 输出结构化解析专项测试。
 
 ---
 
 ## 8. 可维护性与可追溯
 
 - 文档齐全：`REFACTOR-001`（ADR）、`QUALITY-REPORT`（本报告）、`USER-GUIDE`、`CHANGELOG`。
-- 版本化管理：v0.2.0 ~ v0.2.4 已打 tag；代码版本单一来源 `0.2.5`（无漂移）。
+- 版本化管理：v0.2.0 ~ v0.2.5 已打 tag；代码版本单一来源 `0.2.6`（无漂移）。
 - CI：GitHub Actions（lint + type + test + cov + benchmark 冒烟）。
 - 别名层（config `dummy` ↔ registry `dummy-tts/dummy-asr`）建议在文档/扩展指南中显式说明。
 
@@ -171,7 +171,7 @@ registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归�
 - [x] **（registry）** `create(name, capability=None)` 创建期按能力 fail-fast，`model_loader` 传入对应能力。
 - [x] **（命名/别名/暴露面）** config↔registry 别名语义、`/api/metrics` 与 `/api/outputs` 暴露面 AuthN 已在 USER-GUIDE §4.2/§12 注明。
 - [x] **（测试补齐）** inline 分支、`/api/outputs` limit/ISO/时长、`assert_audio_duration`、`Metrics` 自定义桶、`registry.create` 能力、HTTP 日志 trace_id。
-- [ ] **（ASR 解析）** `_parse_asr_output` 优先结构化（llama-server JSON）—— 未实施（低优先级）。
+- [x] **（ASR 解析）** `_parse_asr_output` 结构化：闭合标签对 → JSON 载荷文本字段 → 开标签 → 语言前缀清理；顺带修复 `language: xx` 前缀清理正则。
 - [ ] **（真实后端）** T2A / A2A / 分类 / VAD 真实模型后端接入（v0.3.0 路线）—— 未实施。
 
 ---
@@ -179,10 +179,10 @@ registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归�
 ## 10. 版本路线
 
 ```
-v0.2.5（本版）   P1 全部 4 项 + P2 部分已实施（trace_id 日志/inline 内存安全/outputs 暴露面/多任务口径/
-                 registry 能力 fail-fast/Metrics buckets/文档化）
-v0.2.5+         剩余 P2：ASR 输出结构化解析（低优先级）
+v0.2.6（本版）   P1 全部 4 项 + P2 全部（除真实后端）已实施（trace_id 日志/inline 内存安全/outputs 暴露面/多任务口径/
+                 registry 能力 fail-fast/Metrics buckets/ASR 结构化解析/文档化）
+v0.2.6+         剩余 P2：真实模型后端接入（需真实模型）
 v0.3.0          接入 T2A/A2A/分类/VAD 真实后端；零落盘内存缓冲路径
 ```
 
-> 注：本报告**适用版本标注为 v0.2.5**；分析基线为代码基线 v0.2.4（tag）。§9 中 **P1 全部 4 项 + P2 部分已实施落地**，剩余 P2 项（ASR 结构化解析、真实模型后端）留待后续。
+> 注：本报告**适用版本标注为 v0.2.6**；分析基线为代码基线 v0.2.4（tag）。§9 中 **P1 全部 4 项 + P2 全部（除真实后端）已实施落地**，剩余 P2 仅「真实模型后端接入」。

@@ -7,7 +7,14 @@
 
 ### 计划
 - 接入 T2A / A2A / 音频分类 / VAD 真实后端（v0.3.0，需真实模型）
-- ASR 输出结构化解析（`_parse_asr_output`，低优先级）
+
+## [v0.2.6] - 2026-08-26
+
+### P2 完善（相对 v0.2.5）
+- ASR 输出结构化解析：`_parse_asr_output` 优先闭合 `<asr_text>...</asr_text>` 标签对 → JSON 载荷文本字段（`text/asr_text/content/transcript`）→ 开标签 → 语言前缀清理；顺带修复 `language: xx` 前缀清理正则
+
+### 文档
+- `QUALITY-REPORT.md` 第五轮复审（适用 v0.2.6，§9 P1 全部 + P2 全部（除真实后端）实施记录）
 
 ## [v0.2.5] - 2026-08-26
 
