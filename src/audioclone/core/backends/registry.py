@@ -1,8 +1,13 @@
-"""后端注册表与工厂。"""
+"""后端注册表与工厂。
+
+单池按名注册：每个后端以唯一名称登记一个工厂类；同一模型可聚合多种能力。
+任务相关的便捷别名（如 ``dummy`` 同时服务 TTS/ASR）由 ``model_loader`` 解析。
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 from audioclone.core.capabilities import Capability, ModelBackend
 
@@ -11,71 +16,46 @@ BackendFactory = Callable[..., ModelBackend]
 
 
 class BackendRegistry:
-    """TTS / ASR 后端的命名注册表。
+    """后端注册表（单池，按名注册；按能力创建/查询）。
 
     用法::
 
-        registry.register_tts("dummy", DummyTTSBackend)
-        backend = registry.create_tts("dummy", sample_rate=24000)
+        registry.register("dummy-tts", DummyTTSBackend)
+        backend = registry.create("dummy-tts", sample_rate=24000)
+        registry.list_backends_for(TextToSpeechCapability)  # 按能力聚合查询
     """
 
     def __init__(self) -> None:
-        self._tts: dict[str, BackendFactory] = {}
-        self._asr: dict[str, BackendFactory] = {}
+        self._backends: dict[str, BackendFactory] = {}
 
-    def register_tts(self, name: str, factory: BackendFactory) -> None:
-        """注册一个 TTS 后端工厂（可按名覆盖）。"""
-        self._tts[name] = factory
+    def register(self, name: str, factory: BackendFactory) -> None:
+        """注册一个后端工厂（可按名覆盖）。"""
+        self._backends[name] = factory
 
-    def register_asr(self, name: str, factory: BackendFactory) -> None:
-        """注册一个 ASR 后端工厂（可按名覆盖）。"""
-        self._asr[name] = factory
+    def create(self, name: str, **cfg) -> ModelBackend:
+        """按名称创建后端实例。"""
+        self._ensure(name)
+        return self._backends[name](**cfg)
 
-    def create_tts(self, name: str, **cfg) -> ModelBackend:
-        """按名称创建 TTS 后端实例。"""
-        self._ensure(name, self._tts, "TTS")
-        return self._tts[name](**cfg)
+    def names(self) -> tuple[str, ...]:
+        """已注册的后端名称。"""
+        return tuple(self._backends)
 
-    def create_asr(self, name: str, **cfg) -> ModelBackend:
-        """按名称创建 ASR 后端实例。"""
-        self._ensure(name, self._asr, "ASR")
-        return self._asr[name](**cfg)
-
-    def tts_names(self) -> tuple[str, ...]:
-        """已注册的 TTS 后端名称。"""
-        return tuple(self._tts)
-
-    def asr_names(self) -> tuple[str, ...]:
-        """已注册的 ASR 后端名称。"""
-        return tuple(self._asr)
-
-    def _ensure(self, name: str, pool: dict, kind: str) -> None:
-        if name not in pool:
-            raise KeyError(f"未注册的{kind}后端: {name}（可用: {', '.join(pool)}）")
-
-    def get_tts_factory(self, name: str):
-        """返回已注册的 TTS 后端工厂（未注册返回 None）。"""
-        return self._tts.get(name)
-
-    def get_asr_factory(self, name: str):
-        """返回已注册的 ASR 后端工厂（未注册返回 None）。"""
-        return self._asr.get(name)
+    def get_factory(self, name: str) -> BackendFactory | None:
+        """返回已注册的后端工厂（未注册返回 None）。"""
+        return self._backends.get(name)
 
     def list_backends_for(self, capability: type[Capability]) -> tuple[str, ...]:
-        """返回支持指定能力的所有后端名称（跨 tts/asr，去重）。
-
-        按能力聚合查询，便于「为某任务列出可用后端」。
-        """
+        """返回支持指定能力的所有后端名称（按 ``supports()`` 语义查询）。"""
         names: list[str] = []
-        seen: set[str] = set()
-        for pool in (self._tts, self._asr):
-            for name, factory in pool.items():
-                if name in seen:
-                    continue
-                if isinstance(factory, type) and issubclass(factory, capability):
-                    names.append(name)
-                    seen.add(name)
+        for name, factory in self._backends.items():
+            if isinstance(factory, type) and cast(type[ModelBackend], factory).supports(capability):
+                names.append(name)
         return tuple(names)
+
+    def _ensure(self, name: str) -> None:
+        if name not in self._backends:
+            raise KeyError(f"未注册的后端: {name}（可用: {', '.join(self._backends)}）")
 
 
 # 模块级单例（供需要全局注册的场景使用）
@@ -83,21 +63,16 @@ registry = BackendRegistry()
 
 
 def _register_defaults() -> None:
-    """预注册项目内置后端，收敛 model_loader 的 dynamic import 面。
-
-    通过 importlib 在此处登记具体实现类；此后 model_loader 优先从 registry 解析。
-    """
+    """预注册项目内置后端（注册表为工厂的唯一事实源）。"""
     from audioclone.core.backends.cosyvoice_mlx import CosyVoiceMLXBackend
     from audioclone.core.backends.dummy import DummyASRBackend, DummyOmnibackend, DummyTTSBackend
     from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
 
-    registry.register_tts("cosyvoice3-mlx", CosyVoiceMLXBackend)
-    registry.register_tts("dummy", DummyTTSBackend)
-    registry.register_tts("dummy-omni", DummyOmnibackend)
-
-    registry.register_asr("qwen3-asr-llama", Qwen3AsrLlamaBackend)
-    registry.register_asr("dummy", DummyASRBackend)
-    registry.register_asr("dummy-omni", DummyOmnibackend)
+    registry.register("cosyvoice3-mlx", CosyVoiceMLXBackend)
+    registry.register("qwen3-asr-llama", Qwen3AsrLlamaBackend)
+    registry.register("dummy-tts", DummyTTSBackend)
+    registry.register("dummy-asr", DummyASRBackend)
+    registry.register("dummy-omni", DummyOmnibackend)
 
 
 _register_defaults()

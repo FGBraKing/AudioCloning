@@ -2,10 +2,10 @@
 
 | 元信息 | 值 |
 |--------|----|
-| 文档版本 | 1.1 |
-| **适用版本** | **v0.2.2** |
+| 文档版本 | 1.2 |
+| **适用版本** | **v0.2.3** |
 | 文档类型 | 使用说明（安装 / 配置 / 能力使用 / API / 扩展 / 故障排查 / 部署） |
-| 创建日期 | 2026-08-25（v0.2.2 修订 2026-08-26） |
+| 创建日期 | 2026-08-25（v0.2.3 修订 2026-08-26） |
 | 配套文档 | `QUALITY-REPORT.md`、`REFACTOR-001-audio-toolbox.md`、`README.md` |
 
 ---
@@ -25,13 +25,10 @@ v0.2.1 相比 v0.2.0 的加固点：领域异常体系、pydantic 配置、regis
 音频数值安全、因果重采样、ASR 超时与日志重定向、FastAPI 线程池、上传限流、MLX 串行锁、
 模型生命周期统一、契约/API/音频工具测试与覆盖率门槛、mypy 类型检查。
 
-v0.2.2（本版文档）相比 v0.2.1 的新增与修订：ASR 长音频分片识别、文本分段器接口化（`TextSegmenter`）、
-响度归一化（`loudness_normalize`，已接入合成管线）、WebUI handler 错误装饰器与加载耗时展示、
-registry 按能力聚合查询（`list_backends_for`）、API 请求日志中间件、校验接口收敛
-（`assert_valid_ref_audio`）、默认仅本机绑定、性能基准/客观指标脚本（`tools/`）、CHANGELOG 与 GitHub Actions CI。
-本版已按 `QUALITY-REPORT.md` §9 落地 **P1 全部 + P2**：配置单源化、共享校验助手、ASR 日志目录、
-mypy/覆盖率盲区收编、trace_id + JSON 日志 + `/api/metrics`、长文本段间静音/进度回调/逐段落盘、
-`.env.example` + pre-commit + Makefile、WebUI 多任务实验台（T2A/A2A/分类/VAD）。P0 项留待下轮。
+v0.2.3（本版文档）相比 v0.2.2 的修订（按 `QUALITY-REPORT.md` §9）：**版本单一来源**（`__version__=0.2.3`，pyproject 动态读取）、
+**registry 单池化**（按名注册 + 按能力查询；`dummy` 按任务别名解析）、采样率实时读取、ASR 分片重叠（`AUDIOCLONE_ASR_CHUNK_OVERLAP_SEC`）、
+`prune_outputs` 递归清理（含 `segments/`）、**trace_id 贯穿服务层**、未就绪 → 503、多任务输入校验、
+`pyloudnorm` 可选 extra、metrics 直方图、CI 去兜底 + benchmark 冒烟。
 
 ---
 
@@ -86,17 +83,18 @@ brew install llama.cpp
 
 完整示例见项目根 `.env.example`；也可直接复制为 `.env`（`pydantic-settings` 自动加载）。
 
-### 4.2 后端注册表（`src/audioclone/config.py`）
+### 4.2 后端注册表（`core/backends/registry.py`）
 
 ```python
-TTS_BACKENDS["my-tts"] = {
-    "factory": "audioclone.core.backends.my_tts.MyTTSBackend",  # module.Class
-    "model_id": "my-org/my-model",
-}
+# core/backends/registry.py —— 工厂唯一事实源
+registry.register("my-tts", MyTTSBackend)
+
+# config.py —— 默认选择 + 覆盖参数（可选）
+TTS_BACKENDS["my-tts"] = {"model_id": "my-org/my-model"}
 ```
 
-> 内置后端已在 `core/backends/registry.py` 预注册；`model_loader` 优先从 registry 解析，
-> 未注册时才回退 config 的 factory 字符串（受控 dynamic import）。
+> 内置后端已在 `core/backends/registry.py` 预注册（单池按名注册）；config 不再承载 `factory` 字符串。
+> `dummy` 为任务便捷别名，由 `model_loader` 解析为 `dummy-tts` / `dummy-asr`。
 
 ### 4.3 能力矩阵（当前实现）
 
@@ -269,7 +267,7 @@ print(list_backend_capabilities(m))
 ### 9.1 接入新后端（复用既有能力）
 1. 新建 `core/backends/my_model.py`，继承 `ModelBackend` + 一个或多个能力接口
    （未实现能力方法会构造失败，提示你补全）。
-2. 在 `core/backends/registry.py` 预注册（推荐），或 `config.py` 登记 `factory`。
+2. 在 `core/backends/registry.py` 注册（工厂唯一来源）；`config.py` 可选登记覆盖参数。
 3. 使用 `uv run audioclone-webui --tts-backend my-model` 启用。
 
 ### 9.2 新增能力（新任务）
@@ -289,7 +287,7 @@ API 已注册统一 `exception_handler`。
 
 ```bash
 uv run pytest -m "not integration"                 # 快速：单元/架构/契约/API
-uv run pytest --cov=audioclone                     # 覆盖率（门槛 60%，实测 ~73%）
+uv run pytest --cov=audioclone                     # 覆盖率（门槛 60%，实测 ~76%）
 uv run ruff check .                                # 静态
 uv run mypy src/audioclone                         # 类型（0 errors，全量 39 文件）
 uv run pytest                                      # 含集成（缺模型自动跳过）
@@ -317,7 +315,7 @@ uv run pytest                                      # 含集成（缺模型自动
 
 ## 12. 生产与部署护栏（重要）
 
-- **版本**：当前仓库基线 `0.2.1`；本使用说明适用版本 `v0.2.2`；质量报告见 `QUALITY-REPORT.md`。
+- **版本**：当前仓库基线 `0.2.3`（单一来源 `audioclone.__version__`）；本使用说明适用版本 `v0.2.3`；质量报告见 `QUALITY-REPORT.md`。
 - **绑定地址**：本地体验用 `--host 127.0.0.1`（**默认已仅本机绑定**）；**不要**直接以 `0.0.0.0` 暴露公网。
 - **反向代理 + TLS**：对外服务置于 Nginx/Caddy 后并以 HTTPS 提供。
 - **鉴权**：在反向代理层加 BasicAuth / OAuth；API 建议 `limit_req` 限流。

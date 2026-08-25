@@ -14,6 +14,7 @@ os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
 import gradio as gr
 
+from audioclone import __version__
 from audioclone.config import (
     ASR_SERVER_PORT,
     GRADIO_CONCURRENCY,
@@ -67,7 +68,7 @@ def build_ui(
     with demo:
         gr.Markdown(
             """
-            # AudioCloning - 音频模型体验工具箱 v0.2.1
+            # AudioCloning - 音频模型体验工具箱 v{__version__}
             基于 Fun-CosyVoice3-0.5B (MLX) | 支持零样本克隆、跨语言合成、自然语言指令控制、语音识别
             """
         )
@@ -253,7 +254,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logger.info("=" * 60)
-    logger.info("  AudioCloning - 音频模型体验工具箱 v0.2.1")
+    logger.info("  AudioCloning - 音频模型体验工具箱 v%s", __version__)
     logger.info("=" * 60)
 
     tts_backend: ModelBackend | None = None

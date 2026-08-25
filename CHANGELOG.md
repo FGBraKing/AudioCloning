@@ -7,7 +7,30 @@
 
 ### 计划
 - 接入 T2A / A2A / 音频分类 / VAD 真实后端（v0.3.0）
-- P0 项：版本单一来源、registry 统一、采样率时序、ASR 分片重叠（见 QUALITY-REPORT §9）
+- 剩余 P2：`/api/outputs` 接口、UploadFile 小文件直读、声道统一 `to_mono`
+
+## [v0.2.3] - 2026-08-26
+
+### P0（架构一致性）
+- 版本单一来源：`__version__` 升级 0.2.3，pyproject `[tool.hatch.version]` 动态读取，FastAPI/WebUI 引用，消除代码与文档/tag 漂移
+- registry 单池化：按名注册 + 按能力查询；`list_backends_for` 改用 `supports()`；内置后端全部声明 `capabilities`；config 去除 `factory` 字符串（`dummy` 按任务别名解析 dummy-tts/dummy-asr）
+- 采样率时序：`TTSService.sample_rate` 改为属性实时读取（`load()` 后生效）
+- ASR 分片重叠：段间重叠 `AUDIOCLONE_ASR_CHUNK_OVERLAP_SEC`（默认 1s）+ 尾部去重
+
+### P1（正确性与体验）
+- `prune_outputs` 递归清理（含 `segments/` 子目录）+ 空目录回收
+- trace_id 贯穿服务层：`contextvars` + `TraceIdFilter`，API 中间件 / WebUI handler 注入
+- 未就绪语义：`_get_engine` 改抛 `BackendUnavailable` → 503（新增 exception_handler）
+- 多任务 handler（A2A/分类/VAD）复用 `assert_valid_ref_audio` 输入校验
+- 后端配置 `sample_rate` 引用 `settings.sample_rate` 去重
+
+### P2（部分）
+- pyproject 可选 extra `loudness = ["pyloudnorm>=0.2.0"]`；`configure_logging` 低侵入（仅接管自身 handler）
+- metrics 合成耗时直方图（累积桶）；`/api/metrics` 自身不计入请求计数；JSON 时间 UTC ISO8601
+- CI 集成测试移除 `|| true` 兜底；新增 benchmark 冒烟 job；`Settings` env 覆盖专项测试
+
+### 文档
+- `QUALITY-REPORT.md` 第四轮复审（适用 v0.2.3，§9 P0/P1/P2 部分实施记录）
 
 ## [v0.2.2] - 2026-08-26
 

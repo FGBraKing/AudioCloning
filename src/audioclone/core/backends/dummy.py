@@ -22,6 +22,7 @@ class DummyTTSBackend(ModelBackend, TextToSpeechCapability):
     """返回确定性静音片段的假 TTS 后端，用于验证业务链路。"""
 
     name = "dummy"
+    capabilities = (TextToSpeechCapability,)
 
     def __init__(self, sample_rate: int = 24000, duration_sec: float = DEFAULT_SILENCE_SEC) -> None:
         self.sample_rate = sample_rate
@@ -39,7 +40,11 @@ class DummyASRBackend(ModelBackend, SpeechRecognitionCapability):
     """返回固定占位文本的假 ASR 后端。"""
 
     name = "dummy"
+    capabilities = (SpeechRecognitionCapability,)
     RESULT = "这是一段模拟识别结果。"
+
+    def __init__(self, sample_rate: int = 24000) -> None:
+        self.sample_rate = sample_rate
 
     def transcribe(self, audio_path: str) -> str:
         return self.RESULT
@@ -57,6 +62,14 @@ class DummyOmnibackend(
     """全能力假后端 — 演示「一个模型实现全部六种音频任务」。"""
 
     name = "dummy-omni"
+    capabilities = (
+        TextToSpeechCapability,
+        TextToAudioCapability,
+        SpeechRecognitionCapability,
+        AudioToAudioCapability,
+        AudioClassificationCapability,
+        VoiceActivityCapability,
+    )
     ASR_RESULT = "这是一段模拟识别结果。"
 
     def __init__(self, sample_rate: int = 24000, duration_sec: float = DEFAULT_SILENCE_SEC) -> None:

@@ -173,3 +173,19 @@ def test_clone_internal_error(broken_client):
     )
     assert resp.status_code == 500
     assert "boom" in resp.json()["detail"]
+
+
+def test_clone_backend_unavailable_503(client):
+    """TTS 引擎未就绪时返回 503（BackendUnavailable），而非 400。"""
+    saved = client.app.state.engine
+    client.app.state.engine = None
+    try:
+        resp = client.post(
+            "/api/clone",
+            data={"text": "hi"},
+            files=_upload(_make_wav_bytes()),
+        )
+        assert resp.status_code == 503
+        assert "未就绪" in resp.json()["detail"]
+    finally:
+        client.app.state.engine = saved

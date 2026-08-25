@@ -19,6 +19,7 @@ import numpy as np
 import soundfile as sf
 
 from audioclone.config import (
+    ASR_CHUNK_OVERLAP_SEC,
     ASR_CTX_SIZE,
     ASR_HTTP_TIMEOUT,
     ASR_MAX_SEGMENT_SEC,
@@ -42,6 +43,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
     """管理 llama-server 子进程并通过 HTTP API 进行语音识别。"""
 
     name = "qwen3-asr-llama"
+    capabilities = (SpeechRecognitionCapability,)
 
     def __init__(
         self,
@@ -50,6 +52,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         host: str = ASR_SERVER_HOST,
         port: int = ASR_SERVER_PORT,
         max_segment_sec: float = ASR_MAX_SEGMENT_SEC,
+        overlap_sec: float = ASR_CHUNK_OVERLAP_SEC,
     ) -> None:
         self.model_dir = Path(model_dir) if model_dir else ASR_MODEL_DIR
         self.model_id = model_id or ASR_MODEL_ID
@@ -57,6 +60,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         self.port = port
         self.base_url = f"http://{self.host}:{self.port}"
         self.max_segment_sec = max_segment_sec  # 长音频分片阈值（秒），避免整段 base64 膨胀
+        self.overlap_sec = overlap_sec          # 分片间重叠（秒），避免切词导致识别质量下降
 
         self._process: subprocess.Popen[str] | None = None
         self._model_path: Path | None = None
@@ -266,11 +270,24 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         return resample_audio(data, int(sr), ASR_SAMPLE_RATE)
 
     def _chunk_audio(self, data: np.ndarray) -> list[np.ndarray]:
-        """按 ``max_segment_sec`` 将长音频切段；短音频返回单段。"""
+        """按 ``max_segment_sec`` 分片，段间保留 ``overlap_sec`` 重叠并去重尾部。
+
+        重叠避免切在字/词中间导致识别质量下降；尾部片段若几乎被前一段覆盖则并入。
+        """
         max_len = max(1, int(self.max_segment_sec * ASR_SAMPLE_RATE))
         if len(data) <= max_len:
             return [data]
-        return [data[i : i + max_len] for i in range(0, len(data), max_len)]
+
+        overlap = max(0, int(self.overlap_sec * ASR_SAMPLE_RATE))
+        step = max(1, max_len - overlap)
+        chunks = [data[i : i + max_len] for i in range(0, len(data), step)]
+
+        # 尾部去重：最后一段长度 <= 重叠量，说明其几乎被前一段覆盖 → 前一段扩展到数据末尾
+        if len(chunks) >= 2 and len(chunks[-1]) <= overlap:
+            start = (len(chunks) - 2) * step
+            chunks[-2] = data[start:]
+            chunks.pop()
+        return chunks
 
     @staticmethod
     def _encode_wav_base64(data: np.ndarray) -> str:

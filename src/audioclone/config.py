@@ -3,6 +3,7 @@
 不产生 import 副作用：本模块不写环境变量、不创建目录。
 网络代理等副作用交由应用入口显式设置；输出/日志目录需用时经 ``ensure_*_dir()`` 惰性创建。
 运行时可通过环境变量（前缀 ``AUDIOCLONE_``）或 ``.env`` 覆盖配置，见 ``Settings``。
+后端工厂的唯一事实源为 ``core/backends/registry.py``；本模块仅承载默认选择与覆盖参数。
 """
 
 from __future__ import annotations
@@ -38,40 +39,6 @@ def ensure_logs_dir() -> Path:
     """惰性创建日志目录（避免 import 副作用）。"""
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     return LOGS_DIR
-
-
-# ─── 后端注册表（模型可替换） ───────────────────────────────
-# 每个后端: factory=加载路径(module.Class)，其余键作为构造参数。
-TTS_BACKENDS: dict[str, dict[str, Any]] = {
-    "cosyvoice3-mlx": {
-        "factory": "audioclone.core.backends.cosyvoice_mlx.CosyVoiceMLXBackend",
-        "model_id": MODEL_ID,
-        "model_dir": str(MODEL_DIR),
-    },
-    "dummy": {
-        "factory": "audioclone.core.backends.dummy.DummyTTSBackend",
-        "sample_rate": 24000,
-    },
-    "dummy-omni": {
-        "factory": "audioclone.core.backends.dummy.DummyOmnibackend",
-        "sample_rate": 24000,
-    },
-}
-
-ASR_BACKENDS: dict[str, dict[str, Any]] = {
-    "qwen3-asr-llama": {
-        "factory": "audioclone.core.backends.qwen3_asr_llama.Qwen3AsrLlamaBackend",
-        "model_id": ASR_MODEL_ID,
-        "model_dir": str(ASR_MODEL_DIR),
-    },
-    "dummy": {
-        "factory": "audioclone.core.backends.dummy.DummyASRBackend",
-    },
-    "dummy-omni": {
-        "factory": "audioclone.core.backends.dummy.DummyOmnibackend",
-        "sample_rate": 24000,
-    },
-}
 
 
 class Settings(BaseSettings):
@@ -110,6 +77,7 @@ class Settings(BaseSettings):
     asr_http_timeout: float = 120.0        # 识别 HTTP 超时（秒）
     asr_ready_timeout: float = 60.0        # llama-server 就绪等待超时（秒）
     asr_max_segment_sec: float = 60.0      # ASR 长音频分片阈值（秒）
+    asr_chunk_overlap_sec: float = 1.0     # ASR 分片间重叠（秒），避免切词
 
     # ── 上传 / 资源限流 ────────────────────────────────────
     max_upload_bytes: int = 100 * 1024 * 1024   # 上传音频最大字节数
@@ -149,6 +117,7 @@ ASR_SAMPLE_RATE = settings.asr_sample_rate
 ASR_HTTP_TIMEOUT = settings.asr_http_timeout
 ASR_READY_TIMEOUT = settings.asr_ready_timeout
 ASR_MAX_SEGMENT_SEC = settings.asr_max_segment_sec
+ASR_CHUNK_OVERLAP_SEC = settings.asr_chunk_overlap_sec
 
 MAX_UPLOAD_BYTES = settings.max_upload_bytes
 OUTPUT_KEEP_MAX = settings.output_keep_max
@@ -162,3 +131,32 @@ LOG_JSON = settings.log_json
 
 # API 上传允许的音频扩展名
 ALLOWED_UPLOAD_EXT = ASR_SUPPORTED_FORMATS
+
+
+# ─── 后端默认选择与覆盖参数（工厂唯一来源 = registry） ──────
+# 每个键为后端名称（与 config 暴露的 CLI/env 名一致），值为构造覆盖参数。
+TTS_BACKENDS: dict[str, dict[str, Any]] = {
+    "cosyvoice3-mlx": {
+        "model_id": MODEL_ID,
+        "model_dir": str(MODEL_DIR),
+    },
+    "dummy": {
+        "sample_rate": settings.sample_rate,
+    },
+    "dummy-omni": {
+        "sample_rate": settings.sample_rate,
+    },
+}
+
+ASR_BACKENDS: dict[str, dict[str, Any]] = {
+    "qwen3-asr-llama": {
+        "model_id": ASR_MODEL_ID,
+        "model_dir": str(ASR_MODEL_DIR),
+    },
+    "dummy": {
+        "sample_rate": settings.sample_rate,
+    },
+    "dummy-omni": {
+        "sample_rate": settings.sample_rate,
+    },
+}

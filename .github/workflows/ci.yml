@@ -29,6 +29,10 @@ jobs:
       - name: Unit / contract / API tests (no integration)
         run: uv run pytest -m "not integration" --cov=audioclone --cov-report=term-missing
 
-      # 集成测试需要真实模型与 llama.cpp，CI 环境缺失时自动跳过（见各测试的 skip 逻辑）
-      - name: Integration tests (best-effort)
-        run: uv run pytest -m integration -q --no-cov || true
+      # 集成测试缺模型时按各测试的 skip 逻辑自动跳过（不再用 || true 吞失败）
+      - name: Integration tests (skip if no models)
+        run: uv run pytest -m integration -q --no-cov
+
+      # 基准脚本冒烟：dummy-omni 快速验证工具链可用
+      - name: Benchmark smoke (dummy-omni)
+        run: uv run python -m tools.benchmark --backend dummy-omni --iterations 1

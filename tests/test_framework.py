@@ -329,14 +329,22 @@ def test_registry_list_backends_for():
     from audioclone.core.backends.registry import registry
 
     tts = set(registry.list_backends_for(TextToSpeechCapability))
-    assert {"dummy", "dummy-omni", "cosyvoice3-mlx"} <= tts
+    assert {"dummy-tts", "dummy-omni", "cosyvoice3-mlx"} <= tts
 
     asr = set(registry.list_backends_for(SpeechRecognitionCapability))
-    assert {"dummy", "dummy-omni", "qwen3-asr-llama"} <= asr
+    assert {"dummy-asr", "dummy-omni", "qwen3-asr-llama"} <= asr
 
     vad = registry.list_backends_for(VoiceActivityCapability)
     assert "dummy-omni" in vad
-    assert "dummy" not in vad  # 纯 TTS/ASR dummy 不具备 VAD 能力
+    assert not {"dummy-tts", "dummy-asr"} & set(vad)  # 纯 TTS/ASR dummy 不具备 VAD 能力
+
+
+def test_dummy_alias_resolves_to_task_backends():
+    """CLI/配置常用名 ``dummy`` 按任务解析到对应 dummy-tts / dummy-asr。"""
+    tts = create_tts_backend("dummy")
+    assert isinstance(tts, DummyTTSBackend)
+    asr = create_asr_backend("dummy")
+    assert isinstance(asr, DummyASRBackend)
 
 
 # ─── RLock 串行化（并发安全） ────────────────────────────────

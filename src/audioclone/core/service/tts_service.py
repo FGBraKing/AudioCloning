@@ -19,6 +19,7 @@ from audioclone.config import (
     MAX_TEXT_LENGTH,
     OUTPUT_DIR,
     OUTPUT_KEEP_MAX,
+    SAMPLE_RATE,
     TTS_NORMALIZE_LOUDNESS,
     TTS_SEGMENT_GAP_SEC,
 )
@@ -63,10 +64,14 @@ class TTSService:
                 "(TextToSpeechCapability)"
             )
         self.backend = backend
-        self.sample_rate = backend.sample_rate
         # 可重入锁：合成间可嵌套调用（synthesize_to_file → infer_*）
         self._lock = threading.RLock()
         self._segmenter = segmenter or SentenceTextSegmenter()
+
+    @property
+    def sample_rate(self) -> int:
+        """实时读取后端采样率（模型 ``load()`` 后可能更新，避免构造时快照时序问题）。"""
+        return int(getattr(self.backend, "sample_rate", SAMPLE_RATE))
 
     # ─── 单段推理（暴露给直接调用的场景） ─────────────────────
     def infer_zero_shot(

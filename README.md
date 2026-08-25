@@ -1,4 +1,4 @@
-# AudioCloning — 音频模型体验工具箱 (v0.2.1)
+# AudioCloning — 音频模型体验工具箱 (v0.2.3)
 
 一个**模型可替换**的本地音频体验工具。内置基于 **Fun-CosyVoice3-0.5B (MLX)** 的语音合成/克隆
 与基于 **Qwen3-ASR** 的语音识别，运行于 Apple Silicon。功能框架（WebUI / REST API / 流程编排）与
@@ -155,13 +155,15 @@ class MyTTSBackend(ModelBackend, TextToSpeechCapability):
    若模型同时支持语音识别，一并继承 `SpeechRecognitionCapability` 并实现 `transcribe`，即为**一模型多任务**。
    服务层 `TTSService` / `ASRService` 会按能力校验后端是否可用。查询后端能力：`list_backend_capabilities(backend)`。
 
-2. **注册到配置**（`config.py`）：
+2. **注册到 registry**（`core/backends/registry.py`）并在 config 登记可选覆盖参数：
 
 ```python
-TTS_BACKENDS["my-tts"] = {
-    "factory": "audioclone.core.backends.my_tts.MyTTSBackend",
-    "model_id": "my-org/my-model",
-}
+# core/backends/registry.py —— 工厂的唯一事实源
+from audioclone.core.backends.my_tts import MyTTSBackend
+registry.register("my-tts", MyTTSBackend)
+
+# config.py —— 默认选择 + 覆盖参数（可选）
+TTS_BACKENDS["my-tts"] = {"model_id": "my-org/my-model"}
 ```
 
 随后即可 `uv run audioclone-webui --tts-backend my-tts` 启用。扩展新任务（如变声/分类/VAD）只需新增对应 `Capability`

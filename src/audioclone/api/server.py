@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
+from audioclone import __version__
 from audioclone.api.metrics import metrics
 from audioclone.config import (
     ALLOWED_UPLOAD_EXT,
@@ -37,9 +38,9 @@ from audioclone.config import (
 )
 from audioclone.core import TTSService, create_tts_backend
 from audioclone.core.capabilities import TextToSpeechCapability
-from audioclone.core.exceptions import InvalidAudioInput, ModelLoadError
+from audioclone.core.exceptions import BackendUnavailable, InvalidAudioInput, ModelLoadError
 from audioclone.utils.audio import assert_valid_ref_audio
-from audioclone.utils.logging_utils import configure_logging
+from audioclone.utils.logging_utils import configure_logging, set_trace_id
 from audioclone.utils.validation import assert_tts_text, assert_valid_mode
 
 logger = logging.getLogger(__name__)
@@ -79,20 +80,28 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AudioCloning API",
     description="音频模型体验工具箱 REST API (MLX)",
-    version="0.2.1",
+    version=__version__,
     lifespan=lifespan,
 )
 
 
 @app.middleware("http")
 async def _request_log(request: Request, call_next):
-    """请求日志：记录方法、路径、状态码与耗时；注入 trace_id 并采集指标。"""
+    """请求日志：记录方法、路径、状态码与耗时；注入 trace_id 并采集指标。
+
+    trace_id 经 contextvars 透传至线程池中的服务层日志（请求级可追踪）。
+    """
     trace_id = uuid.uuid4().hex[:12]
+    set_trace_id(trace_id)
     start = time.time()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    finally:
+        set_trace_id(None)
     elapsed = time.time() - start
     response.headers["X-Request-ID"] = trace_id
-    metrics.inc_request(request.url.path, response.status_code)
+    if request.url.path != "/api/metrics":  # 指标端点自身不计入请求计数
+        metrics.inc_request(request.url.path, response.status_code)
     logger.info(
         "HTTP %s %s -> %s (%.0fms)",
         request.method,
@@ -107,7 +116,7 @@ async def _request_log(request: Request, call_next):
 def _get_engine(request: Request) -> TTSService:
     engine = getattr(request.app.state, "engine", None)
     if engine is None:
-        raise InvalidAudioInput("TTS 服务未就绪（模型未加载）")
+        raise BackendUnavailable("TTS 服务未就绪（模型未加载）")
     return engine
 
 
@@ -118,6 +127,11 @@ async def _invalid_input_handler(request: Request, exc: InvalidAudioInput):
 
 @app.exception_handler(ModelLoadError)
 async def _model_error_handler(request: Request, exc: ModelLoadError):
+    return await _json_error(503, str(exc))
+
+
+@app.exception_handler(BackendUnavailable)
+async def _backend_unavailable_handler(request: Request, exc: BackendUnavailable):
     return await _json_error(503, str(exc))
 
 

@@ -235,7 +235,6 @@ wheels = [
 
 [[package]]
 name = "audioclone"
-version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -250,6 +249,11 @@ dependencies = [
     { name = "scipy" },
     { name = "soundfile" },
     { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+loudness = [
+    { name = "pyloudnorm" },
 ]
 
 [package.dev-dependencies]
@@ -272,11 +276,13 @@ requires-dist = [
     { name = "modelscope", specifier = ">=1.20.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
+    { name = "pyloudnorm", marker = "extra == 'loudness'", specifier = ">=0.2.0" },
     { name = "python-multipart" },
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "soundfile", specifier = ">=0.12.1" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
+provides-extras = ["loudness"]
 
 [package.metadata.requires-dev]
 dev = [

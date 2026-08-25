@@ -64,6 +64,21 @@ def test_prune_outputs_disabled(tmp_path):
     assert (tmp_path / "a.wav").exists()
 
 
+def test_prune_outputs_cleans_segments_subdir(tmp_path):
+    """递归清理：segments/ 子目录的分段落盘也受 keep 约束，空目录被移除。"""
+    seg = tmp_path / "segments"
+    seg.mkdir()
+    for i in range(5):
+        (seg / f"s{i}.wav").write_bytes(b"1")
+    (tmp_path / "main.wav").write_bytes(b"1")
+
+    prune_outputs(tmp_path, keep=1)
+
+    remaining = list(tmp_path.rglob("*.wav"))
+    assert len(remaining) == 1
+    assert not seg.exists()  # 文件被清空后，空目录一并移除
+
+
 # ─── sanitize 边界 ──────────────────────────────────────────
 def test_sanitize_all_zero():
     x = np.zeros(1000, dtype=np.float32)

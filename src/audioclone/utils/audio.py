@@ -174,6 +174,7 @@ def concat_segments(segments: list[np.ndarray]) -> np.ndarray:
 def prune_outputs(directory: str | Path, keep: int) -> None:
     """输出目录生命周期管理：保留最近 ``keep`` 个文件，删除更旧的（``keep<=0`` 不清理）。
 
+    递归统计（含 ``segments/`` 子目录的分段落盘），并清理清空后的空目录。
     供服务层落盘后调用，避免 ``outputs`` 长期运行无限增长。
     """
     if keep <= 0:
@@ -182,7 +183,7 @@ def prune_outputs(directory: str | Path, keep: int) -> None:
     if not d.exists():
         return
     files = sorted(
-        (p for p in d.iterdir() if p.is_file()),
+        (p for p in d.rglob("*") if p.is_file()),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -191,3 +192,11 @@ def prune_outputs(directory: str | Path, keep: int) -> None:
             stale.unlink()
         except OSError:
             logger.warning("清理输出失败: %s", stale)
+
+    # 清理因删除文件而空出的子目录（从最深开始）
+    for sub in sorted(d.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        try:
+            if sub.is_dir() and not any(sub.iterdir()):
+                sub.rmdir()
+        except OSError:
+            logger.warning("清理空目录失败: %s", sub)

@@ -1,8 +1,9 @@
 [project]
 name = "audioclone"
-version = "0.2.1"
 description = "音频模型体验工具箱 (MLX, Apple Silicon)"
 readme = "README.md"
+# 版本单一来源：由 src/audioclone/__init__.py 的 __version__ 动态读取
+dynamic = ["version"]
 requires-python = ">=3.13"
 license = "MIT"
 authors = [
@@ -45,8 +46,16 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# 版本单一来源：读取 src/audioclone/__init__.py 中的 __version__
+[tool.hatch.version]
+path = "src/audioclone/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/audioclone"]
+
+# 可选能力：EBU R128 响度归一化（启用 loudness 后 TTS 落盘可用响度匹配）
+[project.optional-dependencies]
+loudness = ["pyloudnorm>=0.2.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
