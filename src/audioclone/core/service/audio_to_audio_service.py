@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from audioclone.core.capabilities import AudioToAudioCapability
+from audioclone.core.exceptions import CapabilityError, InvalidAudioInput
 
 
 class AudioToAudioService:
@@ -14,7 +15,7 @@ class AudioToAudioService:
 
     def __init__(self, backend: AudioToAudioCapability) -> None:
         if not isinstance(backend, AudioToAudioCapability):
-            raise ValueError(
+            raise CapabilityError(
                 f"后端 {getattr(backend, 'name', backend)} 不支持音频到音频能力 "
                 "(AudioToAudioCapability)"
             )
@@ -40,5 +41,5 @@ class AudioToAudioService:
             float32 音频数组
         """
         if not Path(audio_path).exists():
-            raise ValueError(f"音频文件不存在: {audio_path}")
+            raise InvalidAudioInput(f"音频文件不存在: {audio_path}")
         return self.backend.transform(audio_path, instruct=instruct, speed=speed, **kwargs)

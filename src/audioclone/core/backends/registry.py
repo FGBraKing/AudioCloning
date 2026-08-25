@@ -53,6 +53,35 @@ class BackendRegistry:
         if name not in pool:
             raise KeyError(f"未注册的{kind}后端: {name}（可用: {', '.join(pool)}）")
 
+    def get_tts_factory(self, name: str):
+        """返回已注册的 TTS 后端工厂（未注册返回 None）。"""
+        return self._tts.get(name)
+
+    def get_asr_factory(self, name: str):
+        """返回已注册的 ASR 后端工厂（未注册返回 None）。"""
+        return self._asr.get(name)
+
 
 # 模块级单例（供需要全局注册的场景使用）
 registry = BackendRegistry()
+
+
+def _register_defaults() -> None:
+    """预注册项目内置后端，收敛 model_loader 的 dynamic import 面。
+
+    通过 importlib 在此处登记具体实现类；此后 model_loader 优先从 registry 解析。
+    """
+    from audioclone.core.backends.cosyvoice_mlx import CosyVoiceMLXBackend
+    from audioclone.core.backends.dummy import DummyASRBackend, DummyOmnibackend, DummyTTSBackend
+    from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
+
+    registry.register_tts("cosyvoice3-mlx", CosyVoiceMLXBackend)
+    registry.register_tts("dummy", DummyTTSBackend)
+    registry.register_tts("dummy-omni", DummyOmnibackend)
+
+    registry.register_asr("qwen3-asr-llama", Qwen3AsrLlamaBackend)
+    registry.register_asr("dummy", DummyASRBackend)
+    registry.register_asr("dummy-omni", DummyOmnibackend)
+
+
+_register_defaults()

@@ -11,6 +11,7 @@ from typing import Any
 
 from audioclone.config import ASR_AUDIO_MAX_SEC, ASR_SUPPORTED_FORMATS
 from audioclone.core.capabilities import SpeechRecognitionCapability
+from audioclone.core.exceptions import BackendUnavailable, CapabilityError, InvalidAudioInput
 from audioclone.utils.audio import get_audio_duration
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ class ASRService:
 
     def __init__(self, backend: SpeechRecognitionCapability) -> None:
         if not isinstance(backend, SpeechRecognitionCapability):
-            raise ValueError(
+            raise CapabilityError(
                 f"后端 {getattr(backend, 'name', backend)} 不支持语音识别能力 "
                 "(SpeechRecognitionCapability)"
             )
@@ -37,8 +38,9 @@ class ASRService:
 
     def get_status(self) -> dict[str, Any]:
         """组合后端默认信息与自身业务信息。"""
-        status = getattr(self.backend, "get_status", lambda: {})()
-        status.update({"backend": self.backend.name})
+        get_status = getattr(self.backend, "get_status", None)
+        status: dict[str, Any] = get_status() if callable(get_status) else {}
+        status["backend"] = getattr(self.backend, "name", type(self.backend).__name__)
         return status
 
     # ─── 生命周期 ────────────────────────────────────────────
@@ -53,16 +55,18 @@ class ASRService:
         """对音频进行识别，先做业务层校验。"""
         suffix = Path(audio_path).suffix.lower()
         if suffix not in ASR_SUPPORTED_FORMATS:
-            raise ValueError(f"不支持的音频格式: {suffix}，支持: {', '.join(ASR_SUPPORTED_FORMATS)}")
+            raise InvalidAudioInput(
+                f"不支持的音频格式: {suffix}，支持: {', '.join(ASR_SUPPORTED_FORMATS)}"
+            )
 
         duration = get_audio_duration(audio_path)
         if duration <= 0:
-            raise ValueError("无法读取音频文件")
+            raise InvalidAudioInput("无法读取音频文件")
         if duration > ASR_AUDIO_MAX_SEC:
-            raise ValueError(f"音频时长过长 ({duration:.1f}s > {ASR_AUDIO_MAX_SEC}s)")
+            raise InvalidAudioInput(f"音频时长过长 ({duration:.1f}s > {ASR_AUDIO_MAX_SEC}s)")
 
         if not self.backend.is_ready():
-            raise RuntimeError("ASR 服务未就绪，请等待模型加载完成")
+            raise BackendUnavailable("ASR 服务未就绪，请等待模型加载完成")
 
         return self.backend.transcribe(audio_path)
 

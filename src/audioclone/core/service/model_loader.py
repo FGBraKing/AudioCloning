@@ -36,9 +36,23 @@ def _create(kind: str, backends: dict, name: str | None, default: str, overrides
     name = name or default
     if name not in backends:
         raise KeyError(f"未知的{kind}后端: {name}（可用: {', '.join(backends)}）")
+
     spec = dict(backends[name])
     spec.update(overrides or {})
-    cls = _resolve_class(spec.pop("factory"))
+    factory_path = spec.pop("factory", None)
+
+    # 优先从 registry 解析（收敛 dynamic import 面）；未注册时回退 config factory
+    from audioclone.core.backends import registry
+
+    cls = (
+        registry.get_tts_factory(name)
+        if kind == "tts"
+        else registry.get_asr_factory(name)
+    )
+    if cls is None and factory_path:
+        cls = _resolve_class(factory_path)
+    if cls is None:
+        raise KeyError(f"后端未在注册表登记且缺少 factory: {name}")
     return cls(**spec)
 
 

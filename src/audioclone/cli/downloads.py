@@ -72,8 +72,9 @@ def _tts_default_dir() -> Path:
     """从默认 TTS 后端配置取模型目录。"""
     from audioclone.config import MODEL_DIR
 
-    model_dir = TTS_BACKENDS.get(TTS_BACKEND, {}).get("model_dir")
-    return Path(model_dir) if model_dir else MODEL_DIR
+    entry = TTS_BACKENDS.get(TTS_BACKEND, {})
+    model_dir = entry.get("model_dir")
+    return Path(model_dir) if isinstance(model_dir, str) else MODEL_DIR
 
 
 def _run_download(name: str, func, default_dir: Path) -> None:

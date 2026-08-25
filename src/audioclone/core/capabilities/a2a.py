@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 import numpy as np
 
 from audioclone.core.capabilities.base import Capability
 
 
-class AudioToAudioCapability(Capability):
+class AudioToAudioCapability(Capability, ABC):
     """A2A 能力：输入一段参考音频，转换/增强后输出另一段音频。"""
 
     sample_rate: int
 
+    @abstractmethod
     def transform(
         self,
         audio_path: str,

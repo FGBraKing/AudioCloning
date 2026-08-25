@@ -69,12 +69,11 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
         """读取参考音频并重采样到目标采样率，返回 mx.array。"""
         import mlx.core as mx
         import soundfile as sf
-        from scipy.signal import resample
+
+        from audioclone.utils.audio import resample_audio
 
         data, sr = sf.read(ref_audio_path, dtype="float32")
         if data.ndim > 1:  # 多声道取第一声道
             data = data[:, 0]
-        if sr != self.sample_rate:
-            num_samples = int(len(data) * self.sample_rate / sr)
-            data = resample(data, num_samples).astype(np.float32)
+        data = resample_audio(data, int(sr), self.sample_rate)
         return mx.array(data)

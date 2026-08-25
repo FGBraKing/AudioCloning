@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from audioclone.core.capabilities import AudioClassificationCapability
+from audioclone.core.exceptions import CapabilityError, InvalidAudioInput
 
 
 class AudioClassificationService:
@@ -12,7 +13,7 @@ class AudioClassificationService:
 
     def __init__(self, backend: AudioClassificationCapability) -> None:
         if not isinstance(backend, AudioClassificationCapability):
-            raise ValueError(
+            raise CapabilityError(
                 f"后端 {getattr(backend, 'name', backend)} 不支持音频分类能力 "
                 "(AudioClassificationCapability)"
             )
@@ -35,5 +36,5 @@ class AudioClassificationService:
             按置信度降序的 (标签, 分数) 列表
         """
         if not Path(audio_path).exists():
-            raise ValueError(f"音频文件不存在: {audio_path}")
+            raise InvalidAudioInput(f"音频文件不存在: {audio_path}")
         return self.backend.classify(audio_path, top_k=top_k, **kwargs)

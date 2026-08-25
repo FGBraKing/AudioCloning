@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from audioclone.core.capabilities import TextToAudioCapability
+from audioclone.core.exceptions import CapabilityError, InvalidAudioInput
 
 
 class TextToAudioService:
@@ -12,7 +13,7 @@ class TextToAudioService:
 
     def __init__(self, backend: TextToAudioCapability) -> None:
         if not isinstance(backend, TextToAudioCapability):
-            raise ValueError(
+            raise CapabilityError(
                 f"后端 {getattr(backend, 'name', backend)} 不支持文本转音频能力 "
                 "(TextToAudioCapability)"
             )
@@ -31,5 +32,5 @@ class TextToAudioService:
             float32 音频数组
         """
         if not text or not text.strip():
-            raise ValueError("文本提示为空")
+            raise InvalidAudioInput("文本提示为空")
         return self.backend.text_to_audio(text, duration_sec=duration_sec, **kwargs)

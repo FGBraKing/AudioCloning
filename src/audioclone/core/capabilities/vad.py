@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 from audioclone.core.capabilities.base import Capability
 
 
-class VoiceActivityCapability(Capability):
+class VoiceActivityCapability(Capability, ABC):
     """VAD 能力：检测音频中的说话片段（起止时刻）。"""
 
+    @abstractmethod
     def vad(
         self,
         audio_path: str,

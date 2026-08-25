@@ -31,6 +31,7 @@ from audioclone.core.backends.dummy import (
     DummyOmnibackend,
     DummyTTSBackend,
 )
+from audioclone.core.exceptions import AudioError
 
 
 def _make_wav(path: Path, sr: int = 16000, seconds: float = 1.0) -> None:
@@ -89,14 +90,21 @@ def test_asr_service_rejects_bad_format(tmp_path):
     bogus = tmp_path / "input.mp4"  # 不在支持格式内
     bogus.write_bytes(b"nope")
     svc = ASRService(DummyASRBackend())
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         svc.transcribe(str(bogus))
 
 
 # ─── 依赖方向校验：服务层不应依赖具体模型库 ───────────────────
 @pytest.mark.parametrize(
     "module",
-    ["audioclone.core.service.tts_service", "audioclone.core.service.asr_service"],
+    [
+        "audioclone.core.service.tts_service",
+        "audioclone.core.service.asr_service",
+        "audioclone.core.service.text_to_audio_service",
+        "audioclone.core.service.audio_to_audio_service",
+        "audioclone.core.service.audio_classification_service",
+        "audioclone.core.service.vad_service",
+    ],
 )
 def test_service_does_not_import_concrete_libs(module):
     """业务服务层源码不应引用 mlx / llama 等具体实现符号。"""
@@ -106,6 +114,32 @@ def test_service_does_not_import_concrete_libs(module):
     code = Path(src).read_text(encoding="utf-8")
     for forbidden in ("mlx", "llama-server", "llama_server"):
         assert forbidden not in code, f"{module} 不应出现具体模型依赖: {forbidden}"
+
+
+def test_service_never_imports_backends():
+    """契约：服务层不得 import 任何具体后端实现（保持依赖单向）。"""
+    import importlib
+
+    for module in [
+        "audioclone.core.service.tts_service",
+        "audioclone.core.service.asr_service",
+    ]:
+        src = importlib.import_module(module).__file__
+        code = Path(src).read_text(encoding="utf-8")
+        assert "core.backends.cosyvoice" not in code
+        assert "core.backends.qwen3" not in code
+        assert "core.backends.dummy" not in code
+
+
+def test_capability_must_be_implemented():
+    """契约：能力接口为抽象，未实现的方法在实例化时即失败（而非运行时）。"""
+    class BrokenBackend(ModelBackend, TextToSpeechCapability):
+        name = "broken"
+        sample_rate = 24000
+        # 未实现 synthesize → 应无法实例化
+
+    with pytest.raises(TypeError):
+        BrokenBackend()
 
 
 # ─── 能力驱动：一模型多任务 ─────────────────────────────────
@@ -153,9 +187,9 @@ def test_capabilities_listing():
 
 def test_service_rejects_incapable_backend():
     """服务层拒绝不具备对应能力的后端，避免把错误模型接到任务上。"""
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         TTSService(DummyASRBackend())  # type: ignore[arg-type]
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         ASRService(DummyTTSBackend())  # type: ignore[arg-type]
 
 
@@ -245,7 +279,7 @@ def test_t2a_service(tmp_path, monkeypatch):
     assert svc.sample_rate is not None
     audio = svc.generate("雷雨声", duration_sec=0.2)
     assert audio is not None and len(audio) > 0
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         svc.generate("   ")
 
 
@@ -253,7 +287,7 @@ def test_a2a_service(tmp_path):
     svc = AudioToAudioService(DummyOmnibackend())
     audio = svc.transform(_make_wav_file(tmp_path), instruct="变男声")
     assert audio is not None and len(audio) > 0
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         svc.transform(str(tmp_path / "missing.wav"))
 
 
@@ -261,7 +295,7 @@ def test_classification_service(tmp_path):
     svc = AudioClassificationService(DummyOmnibackend())
     labels = svc.classify(_make_wav_file(tmp_path), top_k=3)
     assert labels and labels[0][0] == "speech"
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         svc.classify(str(tmp_path / "missing.wav"))
 
 
@@ -269,7 +303,7 @@ def test_vad_service(tmp_path):
     svc = VoiceActivityService(DummyOmnibackend())
     segments = svc.vad(_make_wav_file(tmp_path))
     assert segments == [(0.0, 1.0)]
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         svc.vad(str(tmp_path / "missing.wav"))
 
 
@@ -284,5 +318,5 @@ def test_vad_service(tmp_path):
 )
 def test_new_services_reject_incapable_backend(service, backend):
     """新 Service 同样拒绝不具备对应能力的后端。"""
-    with pytest.raises(ValueError):
+    with pytest.raises(AudioError):
         service(backend())  # type: ignore[arg-type]

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 from audioclone.core.capabilities.base import Capability
 
 
-class SpeechRecognitionCapability(Capability):
+class SpeechRecognitionCapability(Capability, ABC):
     """ASR / 语音理解能力：对音频文件返回识别文本。
 
     同时承载 ASR 服务生命周期（模型/服务就绪、启停）的约定。

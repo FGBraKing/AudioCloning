@@ -15,18 +15,21 @@ import time
 from pathlib import Path
 
 import httpx
-import numpy as np
 import soundfile as sf
 
 from audioclone.config import (
     ASR_CTX_SIZE,
+    ASR_HTTP_TIMEOUT,
     ASR_MODEL_DIR,
     ASR_N_GPU_LAYERS,
+    ASR_READY_TIMEOUT,
     ASR_SAMPLE_RATE,
     ASR_SERVER_HOST,
     ASR_SERVER_PORT,
+    OUTPUT_DIR,
 )
 from audioclone.core.capabilities import ModelBackend, SpeechRecognitionCapability
+from audioclone.utils.audio import resample_audio
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,8 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         self._process: subprocess.Popen[str] | None = None
         self._model_path: Path | None = None
         self._mmproj_path: Path | None = None
+        self._log_path: Path | None = None
+        self._log_handle: io.TextIOWrapper | None = None
 
         # 扫描模型文件
         self._locate_model_files()
@@ -90,7 +95,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         return self._model_path is not None and self._mmproj_path is not None
 
     # ─── 生命周期 ────────────────────────────────────────────
-    def start(self, timeout: float = 60.0) -> bool:
+    def start(self, timeout: float = ASR_READY_TIMEOUT) -> bool:
         if not self.is_model_available:
             logger.error("[ASR] 模型文件不完整，无法启动服务")
             return False
@@ -114,21 +119,29 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
             "-ngl", str(ASR_N_GPU_LAYERS),
         ]
 
+        # 输出重定向到日志文件，避免 PIPE 缓冲填满阻塞子进程
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        self._log_path = OUTPUT_DIR / "asr_llama_server.log"
+        self._log_handle = open(self._log_path, "a", encoding="utf-8")  # noqa: SIM115
+
         logger.info("[ASR] 启动 llama-server: %s", " ".join(cmd))
         try:
             self._process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                cmd, stdout=subprocess.DEVNULL, stderr=self._log_handle, text=True
             )
         except Exception as e:  # noqa: BLE001
             logger.error("[ASR] 启动 llama-server 失败: %s", e)
+            self._close_log()
             return False
 
         logger.info("[ASR] 等待服务就绪 (超时 %.0fs)...", timeout)
         start_time = time.time()
         while time.time() - start_time < timeout:
             if self._process.poll() is not None:
-                stderr_output = self._process.stderr.read() if self._process.stderr else ""
-                logger.error("[ASR] llama-server 意外退出: %s", stderr_output[:500])
+                logger.error(
+                    "[ASR] llama-server 意外退出，日志: %s",
+                    self._read_log_tail(),
+                )
                 self._process = None
                 return False
             if self.is_ready():
@@ -140,6 +153,20 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         self.stop()
         return False
 
+    def _close_log(self) -> None:
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
+
+    def _read_log_tail(self, limit: int = 1024) -> str:
+        try:
+            if self._log_path is None:
+                return ""
+            data = self._log_path.read_text(encoding="utf-8", errors="replace")
+            return data[-limit:] if data else ""
+        except OSError:
+            return ""
+
     def stop(self) -> None:
         if self._process is not None:
             logger.info("[ASR] 正在停止 llama-server...")
@@ -150,7 +177,8 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
                 self._process.kill()
                 self._process.wait()
             self._process = None
-            logger.info("[ASR] llama-server 已停止")
+        self._close_log()
+        logger.info("[ASR] llama-server 已停止")
 
     def close(self) -> None:
         self.stop()
@@ -190,7 +218,9 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
 
         try:
             resp = httpx.post(
-                f"{self.base_url}/v1/chat/completions", json=payload, timeout=120.0
+                f"{self.base_url}/v1/chat/completions",
+                json=payload,
+                timeout=ASR_HTTP_TIMEOUT,
             )
             resp.raise_for_status()
         except httpx.TimeoutException as e:
@@ -212,11 +242,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         data, sr = sf.read(audio_path, dtype="float32")
         if data.ndim > 1:
             data = data.mean(axis=1)
-        if sr != ASR_SAMPLE_RATE:
-            from scipy.signal import resample
-
-            num_samples = int(len(data) * ASR_SAMPLE_RATE / sr)
-            data = resample(data, num_samples).astype(np.float32)
+        data = resample_audio(data, int(sr), ASR_SAMPLE_RATE)
 
         buffer = io.BytesIO()
         sf.write(buffer, data, ASR_SAMPLE_RATE, format="WAV")

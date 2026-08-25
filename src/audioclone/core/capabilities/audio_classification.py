@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 from audioclone.core.capabilities.base import Capability
 
 
-class AudioClassificationCapability(Capability):
+class AudioClassificationCapability(Capability, ABC):
     """对音频进行分类（如语音/音乐/环境声 / 语种 / 事件识别）。"""
 
+    @abstractmethod
     def classify(
         self,
         audio_path: str,

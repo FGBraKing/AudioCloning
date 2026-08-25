@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 import numpy as np
 
@@ -12,7 +12,7 @@ from audioclone.core.capabilities.base import Capability
 TTS_MODES: tuple[str, ...] = ("zero_shot", "cross_lingual", "instruct")
 
 
-class TextToSpeechCapability(Capability):
+class TextToSpeechCapability(Capability, ABC):
     """TTS 能力：接收单段文本 + 参考音频，返回该段的音频数组。"""
 
     sample_rate: int

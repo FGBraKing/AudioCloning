@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+
+# 本地回环不受系统代理影响（在 gradio/httpx 等网络库导入前设置）
+os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
+os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
 import gradio as gr
 
@@ -18,6 +23,7 @@ from audioclone.config import (
 )
 from audioclone.core import (
     ASRService,
+    ModelBackend,
     TTSService,
     create_asr_backend,
     create_tts_backend,
@@ -204,54 +210,60 @@ def main() -> None:
     args = parser.parse_args()
 
     logger.info("=" * 60)
-    logger.info("  AudioCloning - 音频模型体验工具箱 v0.2.0")
+    logger.info("  AudioCloning - 音频模型体验工具箱 v0.2.1")
     logger.info("=" * 60)
 
-    # 加载 TTS 服务（后端经 model_loader 创建，默认 cosyvoice3-mlx）
-    tts_opts: dict = {}
-    if args.tts_backend is not None:
-        tts_opts["name"] = args.tts_backend
-    if args.model_dir is not None:
-        tts_opts["model_dir"] = args.model_dir  # 显式传入时才覆盖，兼容 dummy 等后端
-    tts_backend = create_tts_backend(**tts_opts)
-    logger.info("正在加载 TTS 后端: %s (能力: %s)...", tts_backend.name, ", ".join(list_backend_capabilities(tts_backend)))
-    tts_backend.load()
-    engine = TTSService(tts_backend)
-    logger.info("TTS 服务就绪 (采样率 %s)", engine.sample_rate)
-
-    # 初始化 ASR 服务（后端经 model_loader 创建，默认 qwen3-asr-llama）
-    asr_opts: dict = {}
-    if args.asr_backend is not None:
-        asr_opts["name"] = args.asr_backend
-    if args.asr_model_dir is not None:
-        asr_opts["model_dir"] = args.asr_model_dir
-    asr_backend = create_asr_backend(**asr_opts)
-    asr_engine = ASRService(asr_backend)
-    if not args.no_asr:
-        if asr_engine.is_model_available:
-            logger.info("正在启动 ASR 服务 (%s)...", asr_backend.name)
-            if asr_engine.start_server():
-                logger.info("ASR 服务已就绪")
-            else:
-                logger.warning("ASR 服务启动失败，语音识别功能不可用")
-        else:
-            logger.warning("ASR 模型文件未找到，语音识别功能不可用")
-            logger.warning("请运行: uv run audioclone-download-asr")
-    else:
-        logger.info("ASR 功能已禁用 (--no_asr)")
-
-    # 构建 UI
-    demo = build_ui(engine, asr_engine)
-    demo.queue(max_size=GRADIO_MAX_QUEUE, default_concurrency_limit=GRADIO_CONCURRENCY)
-
+    tts_backend: ModelBackend | None = None
+    asr_backend: ModelBackend | None = None
     try:
+        # 加载 TTS 服务（后端经 model_loader 创建，默认 cosyvoice3-mlx）
+        tts_opts: dict = {}
+        if args.tts_backend is not None:
+            tts_opts["name"] = args.tts_backend
+        if args.model_dir is not None:
+            tts_opts["model_dir"] = args.model_dir  # 显式传入时才覆盖，兼容 dummy 等后端
+        tts_backend = create_tts_backend(**tts_opts)
+        logger.info("正在加载 TTS 后端: %s (能力: %s)...", tts_backend.name, ", ".join(list_backend_capabilities(tts_backend)))
+        tts_backend.load()
+        engine = TTSService(tts_backend)
+        logger.info("TTS 服务就绪 (采样率 %s)", engine.sample_rate)
+
+        # 初始化 ASR 服务（后端经 model_loader 创建，默认 qwen3-asr-llama）
+        asr_opts: dict = {}
+        if args.asr_backend is not None:
+            asr_opts["name"] = args.asr_backend
+        if args.asr_model_dir is not None:
+            asr_opts["model_dir"] = args.asr_model_dir
+        asr_backend = create_asr_backend(**asr_opts)
+        asr_engine = ASRService(asr_backend)
+        if not args.no_asr:
+            if asr_engine.is_model_available:
+                logger.info("正在启动 ASR 服务 (%s)...", asr_backend.name)
+                if asr_engine.start_server():
+                    logger.info("ASR 服务已就绪")
+                else:
+                    logger.warning("ASR 服务启动失败，语音识别功能不可用")
+            else:
+                logger.warning("ASR 模型文件未找到，语音识别功能不可用")
+                logger.warning("请运行: uv run audioclone-download-asr")
+        else:
+            logger.info("ASR 功能已禁用 (--no_asr)")
+
+        # 构建 UI
+        demo = build_ui(engine, asr_engine)
+        demo.queue(max_size=GRADIO_MAX_QUEUE, default_concurrency_limit=GRADIO_CONCURRENCY)
+
         demo.launch(
             server_name=args.host,
             server_port=args.port,
             theme=gr.themes.Soft(),
         )
     finally:
-        asr_engine.stop_server()
+        # 统一释放全部后端资源
+        if asr_backend is not None:
+            asr_backend.close()
+        if tts_backend is not None:
+            tts_backend.close()
 
 
 if __name__ == "__main__":

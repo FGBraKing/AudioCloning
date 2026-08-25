@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 import numpy as np
 
 from audioclone.core.capabilities.base import Capability
 
 
-class TextToAudioCapability(Capability):
+class TextToAudioCapability(Capability, ABC):
     """T2A 能力：根据文本提示生成音频。
 
     与 TTS 的区别：此处面向「提示描述的声音/音乐/音效」，而非逐字朗读的人声。
@@ -15,6 +17,7 @@ class TextToAudioCapability(Capability):
 
     sample_rate: int
 
+    @abstractmethod
     def text_to_audio(
         self,
         text: str,

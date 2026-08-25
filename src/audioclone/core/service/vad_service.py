@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from audioclone.core.capabilities import VoiceActivityCapability
+from audioclone.core.exceptions import CapabilityError, InvalidAudioInput
 
 
 class VoiceActivityService:
@@ -12,7 +13,7 @@ class VoiceActivityService:
 
     def __init__(self, backend: VoiceActivityCapability) -> None:
         if not isinstance(backend, VoiceActivityCapability):
-            raise ValueError(
+            raise CapabilityError(
                 f"后端 {getattr(backend, 'name', backend)} 不支持语音活动检测能力 "
                 "(VoiceActivityCapability)"
             )
@@ -29,5 +30,5 @@ class VoiceActivityService:
             按时间升序的 ``[(start_sec, end_sec), ...]`` 语音片段
         """
         if not Path(audio_path).exists():
-            raise ValueError(f"音频文件不存在: {audio_path}")
+            raise InvalidAudioInput(f"音频文件不存在: {audio_path}")
         return self.backend.vad(audio_path, **kwargs)
