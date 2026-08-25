@@ -6,6 +6,7 @@ import numpy as np
 import soundfile as sf
 
 from audioclone.utils.audio import (
+    assert_audio_duration,
     loudness_normalize,
     prune_outputs,
     resample_audio,
@@ -157,3 +158,21 @@ def test_to_mono_mean_mode():
     mono = to_mono(stereo, mode="mean")
     assert mono.ndim == 1
     assert np.allclose(mono, 0.6)
+
+
+# ─── assert_audio_duration（多任务时长口径） ─────────────────
+def test_assert_audio_duration(tmp_path):
+    import pytest
+
+    from audioclone.core.exceptions import InvalidAudioInput
+
+    short = _make_wav(tmp_path / "short.wav", seconds=0.1)
+    ok = _make_wav(tmp_path / "ok.wav", seconds=2.0)
+
+    with pytest.raises(InvalidAudioInput):
+        assert_audio_duration(short, max_sec=1.0)  # 过短
+    with pytest.raises(InvalidAudioInput):
+        assert_audio_duration(ok, max_sec=1.0)  # 2s > 1s
+    assert_audio_duration(ok, max_sec=300.0)  # 通过（多任务上限 300s）
+    with pytest.raises(InvalidAudioInput):
+        assert_audio_duration(str(tmp_path / "nope.wav"), max_sec=300.0)  # 不可读

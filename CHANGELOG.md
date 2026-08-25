@@ -7,6 +7,23 @@
 
 ### 计划
 - 接入 T2A / A2A / 音频分类 / VAD 真实后端（v0.3.0，需真实模型）
+- ASR 输出结构化解析（`_parse_asr_output`，低优先级）
+
+## [v0.2.5] - 2026-08-26
+
+### P1（缺陷修复与健壮性，按 QUALITY-REPORT v0.2.5 §9）
+- trace_id 日志缺陷修复：`TraceIdFilter` 仅当记录无 `trace_id` 时注入（保留 extra），API 请求日志恢复 trace_id
+- inline 上传内存安全：`_save_upload` 阈值感知读取（不信任客户端 size），超阈值转流式写盘
+- `/api/outputs`：`limit` 上限 200、`modified` 改 UTC ISO8601、`include_duration` 可跳过读头
+- 多任务校验口径：新增 `assert_audio_duration(path, max_sec)`，A2A/分类/VAD 使用 `ASR_AUDIO_MAX_SEC`（300s）
+
+### P2（部分）
+- `registry.create(name, capability=None)` 创建期能力 fail-fast，`model_loader` 传入对应能力
+- `Metrics(buckets=...)` 可配置（缺 `inf` 尾桶抛错）
+- USER-GUIDE：`/api/outputs` 参数、uvicorn 入口日志差异、`/api/metrics`+`/api/outputs` 暴露面 AuthN 注明
+
+### 文档
+- `QUALITY-REPORT.md` 第五轮复审（适用 v0.2.5，§9 P1 全部 + P2 部分实施记录）
 
 ## [v0.2.4] - 2026-08-26
 

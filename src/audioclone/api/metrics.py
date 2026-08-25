@@ -19,14 +19,21 @@ SYNTH_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, float("inf"))
 
 
 class Metrics:
-    """线程安全的计数器/直方图集合。"""
+    """线程安全的计数器/直方图集合。
 
-    def __init__(self) -> None:
+    Args:
+        buckets: 合成耗时直方图桶上界（含 ``float('inf')`` 尾桶）；默认见 ``SYNTH_BUCKETS``。
+    """
+
+    def __init__(self, buckets: tuple[float, ...] = SYNTH_BUCKETS) -> None:
+        if not buckets or buckets[-1] != float("inf"):
+            raise ValueError("buckets 需以 float('inf') 结尾（Prometheus 直方图要求）")
+        self._buckets = buckets
         self._lock = threading.Lock()
         self._requests: dict[tuple[str, int], int] = {}   # (path, status) -> count
         self._synth_count: int = 0
         self._synth_seconds: float = 0.0
-        self._synth_hist: list[int] = [0] * len(SYNTH_BUCKETS)
+        self._synth_hist: list[int] = [0] * len(buckets)
         self._started = time.time()
 
     def inc_request(self, path: str, status: int) -> None:
@@ -39,7 +46,7 @@ class Metrics:
             self._synth_count += 1
             self._synth_seconds += seconds
             # Prometheus 直方图为累积桶：落入某桶即计入其及所有更高上界桶
-            for i, upper in enumerate(SYNTH_BUCKETS):
+            for i, upper in enumerate(self._buckets):
                 if seconds <= upper:
                     for j in range(i, len(self._synth_hist)):
                         self._synth_hist[j] += 1
@@ -63,7 +70,7 @@ class Metrics:
                 f"audioclone_synthesis_seconds_total {self._synth_seconds:.4f}",
                 "# TYPE audioclone_synthesis_duration_seconds histogram",
             ]
-            for upper, n in zip(SYNTH_BUCKETS, self._synth_hist, strict=True):
+            for upper, n in zip(self._buckets, self._synth_hist, strict=True):
                 le = "+Inf" if upper == float("inf") else f"{upper:g}"
                 lines.append(
                     f'audioclone_synthesis_duration_seconds_bucket{{le="{le}"}} {n}'

@@ -61,6 +61,23 @@ def assert_valid_ref_audio(path: str) -> None:
         raise InvalidAudioInput(msg)
 
 
+def assert_audio_duration(path: str, max_sec: float, min_sec: float = 1.0) -> None:
+    """校验音频时长在 ``[min_sec, max_sec]``，不合法抛 ``InvalidAudioInput``。
+
+    供时长口径不同于 TTS 参考音频（1~30s）的任务（如 A2A / 分类 / VAD，上限可取
+    ``ASR_AUDIO_MAX_SEC``）复用。
+    """
+    from audioclone.core.exceptions import InvalidAudioInput  # 延迟导入避免循环
+
+    duration = get_audio_duration(path)
+    if duration <= 0:
+        raise InvalidAudioInput("无法读取音频文件")
+    if duration < min_sec:
+        raise InvalidAudioInput(f"音频时长过短 ({duration:.1f}s < {min_sec:.0f}s)")
+    if duration > max_sec:
+        raise InvalidAudioInput(f"音频时长过长 ({duration:.1f}s > {max_sec:.0f}s)")
+
+
 def get_audio_duration(path: str) -> float:
     """获取音频文件时长（秒）。"""
     try:

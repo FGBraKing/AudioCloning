@@ -2,10 +2,10 @@
 
 | 元信息 | 值 |
 |--------|----|
-| 文档版本 | 1.3 |
-| **适用版本** | **v0.2.4** |
+| 文档版本 | 1.4 |
+| **适用版本** | **v0.2.5** |
 | 文档类型 | 使用说明（安装 / 配置 / 能力使用 / API / 扩展 / 故障排查 / 部署） |
-| 创建日期 | 2026-08-25（v0.2.4 修订 2026-08-26） |
+| 创建日期 | 2026-08-25（v0.2.5 修订 2026-08-26） |
 | 配套文档 | `QUALITY-REPORT.md`、`REFACTOR-001-audio-toolbox.md`、`README.md` |
 
 ---
@@ -136,6 +136,9 @@ uv run audioclone-webui --tts-backend dummy-omni --asr-backend dummy-omni
 uv run audioclone-api              # http://127.0.0.1:8000（见 §12 部署护栏）
 ```
 
+> 结构化日志 / trace_id filter 由入口（`audioclone-api` 或 `python -m audioclone.api.server`）初始化；
+> 若直接 `uvicorn audioclone.api.server:app` 启动，则不包含上述日志增强（仅功能接口可用）。
+
 ---
 
 ## 6. 命令参考
@@ -215,9 +218,11 @@ Prometheus 文本格式：`audioclone_requests_total{path,status}`、`audioclone
 ### 7.4 历史输出
 
 ```
-GET /api/outputs?limit=50
+GET /api/outputs?limit=50&include_duration=true
 ```
-按修改时间倒序列出历史输出音频（含 `segments/` 子目录），返回 `count` 与 `files`（名称 / 相对路径 / 字节数 / 修改时间 / 时长秒）。
+按修改时间倒序列出历史输出音频（含 `segments/` 子目录）。`limit` 上限 200（防滥用）；
+`include_duration=false` 可跳过逐文件读头以加速。返回 `count` 与 `files`
+（名称 / 相对路径 / 字节数 / 修改时间(UTC ISO8601) / 时长秒）。
 
 ### 7.5 错误响应
 
@@ -324,10 +329,11 @@ uv run pytest                                      # 含集成（缺模型自动
 
 ## 12. 生产与部署护栏（重要）
 
-- **版本**：当前仓库基线 `0.2.4`（单一来源 `audioclone.__version__`）；本使用说明适用版本 `v0.2.4`；质量报告见 `QUALITY-REPORT.md`。
+- **版本**：当前仓库基线 `0.2.5`（单一来源 `audioclone.__version__`）；本使用说明适用版本 `v0.2.5`；质量报告见 `QUALITY-REPORT.md`。
 - **绑定地址**：本地体验用 `--host 127.0.0.1`（**默认已仅本机绑定**）；**不要**直接以 `0.0.0.0` 暴露公网。
 - **反向代理 + TLS**：对外服务置于 Nginx/Caddy 后并以 HTTPS 提供。
 - **鉴权**：在反向代理层加 BasicAuth / OAuth；API 建议 `limit_req` 限流。
 - **上传**：API 已内置大小上限与格式/时长/采样率校验。
+- **指标/输出接口**：`/api/metrics` 与 `/api/outputs` 无内建鉴权，公网部署建议随反向代理 AuthN 保护。
 - **常驻**：systemd/launchd 管理；优雅退出自动释放后端资源（lifespan/`finally` close）。
 - **可追溯**：架构决策见 `docs/REFACTOR-001-audio-toolbox.md`（ADR-001~004 + 能力演进）；变更记录见 `CHANGELOG.md`。

@@ -347,6 +347,18 @@ def test_dummy_alias_resolves_to_task_backends():
     assert isinstance(asr, DummyASRBackend)
 
 
+def test_registry_create_checks_capability():
+    """registry.create 在创建期按能力 fail-fast（P2）。"""
+    from audioclone.core.backends.registry import registry
+    from audioclone.core.exceptions import CapabilityError
+
+    with pytest.raises(CapabilityError):
+        registry.create("dummy-tts", capability=SpeechRecognitionCapability)
+
+    backend = registry.create("dummy-tts", capability=TextToSpeechCapability)
+    assert isinstance(backend, DummyTTSBackend)
+
+
 # ─── RLock 串行化（并发安全） ────────────────────────────────
 def test_rlock_serializes_synthesis():
     class SlowBackend(DummyTTSBackend):

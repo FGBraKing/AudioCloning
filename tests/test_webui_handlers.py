@@ -184,3 +184,13 @@ def test_multitask_guard_incapable_backend():
     with pytest.raises(gr.Error) as ei:
         handlers["classify"]("whatever.wav")
     assert "不支持" in str(ei.value)
+
+
+def test_multitask_accepts_long_audio(tmp_path):
+    """多任务时长口径独立于 TTS（>30s 但 <300s 应通过）。"""
+    handlers = make_multitask_handlers(DummyOmnibackend(sample_rate=24000))
+    long_wav = _make_wav(tmp_path / "long.wav", seconds=40)  # >30s，<300s
+    _, audio = handlers["a2a"](long_wav, "变男声")
+    assert len(audio) > 0
+    labels = handlers["classify"](long_wav)
+    assert "speech" in labels

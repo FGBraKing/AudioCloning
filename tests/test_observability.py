@@ -8,6 +8,7 @@ import logging
 from audioclone.api.metrics import SYNTH_BUCKETS, Metrics
 from audioclone.utils.logging_utils import (
     JsonFormatter,
+    TraceIdFilter,
     configure_logging,
     get_trace_id,
     set_trace_id,
@@ -94,3 +95,44 @@ def test_settings_env_override(monkeypatch):
     s = Settings()
     assert s.max_upload_bytes == 12345
     assert s.tts_backend == "dummy-omni"
+
+
+# ─── TraceIdFilter：保留显式 extra / 注入上下文 ──────────────
+def _capture_handler() -> tuple[logging.Handler, list[logging.LogRecord]]:
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = lambda r: records.append(r)  # type: ignore[method-assign]
+    handler.addFilter(TraceIdFilter())
+    return handler, records
+
+
+def test_trace_id_filter_preserves_explicit_extra():
+    """显式 ``extra={"trace_id": ...}`` 不被 filter 覆盖（回归 P1 缺陷）。"""
+    handler, records = _capture_handler()
+    logger = logging.getLogger("test.traceid.preserve")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    set_trace_id("ctx-tid")
+    try:
+        logger.info("with-extra", extra={"trace_id": "explicit"})
+        assert records[-1].trace_id == "explicit"
+
+        logger.info("no-extra")  # 无 extra → 注入 contextvar
+        assert records[-1].trace_id == "ctx-tid"
+    finally:
+        set_trace_id(None)
+        logger.removeHandler(handler)
+
+
+def test_metrics_custom_buckets():
+    import pytest
+
+    m = Metrics(buckets=(0.5, float("inf")))
+    m.record_synthesis(0.2)
+    m.record_synthesis(5.0)
+    text = m.render()
+    assert 'le="0.5"} 1' in text
+    assert 'le="+Inf"} 2' in text
+
+    with pytest.raises(ValueError):
+        Metrics(buckets=(0.5,))  # 缺 inf 尾桶

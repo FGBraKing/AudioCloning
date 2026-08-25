@@ -15,6 +15,7 @@ import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 VALID_MODES = ("zero_shot", "cross_lingual", "instruct")
 
 MAX_UPLOAD_DISPLAY = f"{MAX_UPLOAD_BYTES / (1024 * 1024):.0f}MB"
+MAX_OUTPUTS_LIMIT = 200  # /api/outputs 单次返回上限（防滥用）
 
 
 @asynccontextmanager
@@ -161,12 +163,14 @@ def metrics_endpoint() -> Response:
 
 
 @app.get("/api/outputs")
-def list_outputs(limit: int = 50) -> dict[str, Any]:
+def list_outputs(limit: int = 50, include_duration: bool = True) -> dict[str, Any]:
     """列出历史输出音频（含 ``segments/`` 子目录），按修改时间倒序。
 
     Args:
-        limit: 最多返回条数（默认 50）。
+        limit: 最多返回条数（上限 200，防滥用）。
+        include_duration: 是否计算每文件时长（读头，大目录可置 False 加速）。
     """
+    limit = max(0, min(limit, MAX_OUTPUTS_LIMIT))
     if not OUTPUT_DIR.exists():
         return {"count": 0, "files": []}
 
@@ -178,15 +182,15 @@ def list_outputs(limit: int = 50) -> dict[str, Any]:
             continue
         try:
             stat = p.stat()
-            files.append(
-                {
-                    "name": p.name,
-                    "path": str(p.relative_to(OUTPUT_DIR)),
-                    "size_bytes": stat.st_size,
-                    "modified": stat.st_mtime,
-                    "duration_sec": round(get_audio_duration(str(p)), 2),
-                }
-            )
+            entry: dict[str, Any] = {
+                "name": p.name,
+                "path": str(p.relative_to(OUTPUT_DIR)),
+                "size_bytes": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+            }
+            if include_duration:
+                entry["duration_sec"] = round(get_audio_duration(str(p)), 2)
+            files.append(entry)
         except OSError:
             continue
     return {"count": len(files), "files": files}
@@ -195,8 +199,8 @@ def list_outputs(limit: int = 50) -> dict[str, Any]:
 def _save_upload(upload: UploadFile) -> str:
     """将上传音频安全落盘为临时文件；限制大小、校验扩展名。
 
-    小文件（≤ ``AUDIOCLONE_MAX_INLINE_UPLOAD_BYTES``）一次读入内存后单次写入，
-    减少分块 IO；大文件按 1MB 分块流式写入，内存可控。
+    内存安全：不信任客户端声明的 ``size``，按 1MB 分块读取；内容 ≤ ``AUDIOCLONE_MAX_INLINE_UPLOAD_BYTES``
+    时在内存暂存后单次落盘（小文件快路径），超过阈值即转流式写盘（内存始终有界）。
     """
     filename = upload.filename or "upload.wav"
     suffix = Path(filename).suffix.lower()
@@ -212,25 +216,25 @@ def _save_upload(upload: UploadFile) -> str:
         )
 
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    buffer = bytearray()  # 仅在小文件阈值内暂存
     try:
-        # 小文件内存直读：一次读入，单次落盘
-        if size is not None and size <= MAX_INLINE_UPLOAD_BYTES:
-            data = upload.file.read()
-            if len(data) > MAX_UPLOAD_BYTES:
+        written = 0
+        while True:
+            chunk = upload.file.read(1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
                 raise InvalidAudioInput(f"上传文件过大，上限 {MAX_UPLOAD_DISPLAY}")
-            tmp.write(data)
-        else:
-            written = 0
-            while True:
-                chunk = upload.file.read(1024 * 1024)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > MAX_UPLOAD_BYTES:
-                    raise InvalidAudioInput(
-                        f"上传文件过大，上限 {MAX_UPLOAD_DISPLAY}"
-                    )
+            if written <= MAX_INLINE_UPLOAD_BYTES:
+                buffer += chunk  # 小文件：内存暂存
+            else:
+                if buffer:  # 超过阈值：先落盘内存部分，再转流式
+                    tmp.write(bytes(buffer))
+                    buffer.clear()
                 tmp.write(chunk)
+        if buffer:
+            tmp.write(bytes(buffer))
     except Exception:
         tmp.close()
         os.unlink(tmp.name)

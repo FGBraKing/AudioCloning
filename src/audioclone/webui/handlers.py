@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import gradio as gr
 
-from audioclone.config import MAX_TEXT_LENGTH
+from audioclone.config import ASR_AUDIO_MAX_SEC, MAX_TEXT_LENGTH
 from audioclone.core import (
     ASRService,
     AudioClassificationService,
@@ -29,7 +29,7 @@ from audioclone.core.capabilities import (
     VoiceActivityCapability,
 )
 from audioclone.core.exceptions import AudioError
-from audioclone.utils.audio import assert_valid_ref_audio
+from audioclone.utils.audio import assert_audio_duration, assert_valid_ref_audio
 from audioclone.utils.logging_utils import set_trace_id
 from audioclone.utils.validation import assert_tts_text
 
@@ -202,7 +202,7 @@ def make_multitask_handlers(backend: ModelBackend) -> dict[str, Callable[..., An
         _guard(AudioToAudioCapability)
         if not audio_path:
             raise gr.Error("请上传音频")
-        _require_ref_audio(audio_path)  # 复用统一音频校验（格式/时长/采样率）
+        assert_audio_duration(audio_path, ASR_AUDIO_MAX_SEC)  # 时长口径独立于 TTS（上限 300s）
         audio = AudioToAudioService(cast(AudioToAudioCapability, backend)).transform(
             audio_path, instruct=instruct or ""
         )
@@ -213,7 +213,7 @@ def make_multitask_handlers(backend: ModelBackend) -> dict[str, Callable[..., An
         _guard(AudioClassificationCapability)
         if not audio_path:
             raise gr.Error("请上传音频")
-        _require_ref_audio(audio_path)
+        assert_audio_duration(audio_path, ASR_AUDIO_MAX_SEC)
         labels = AudioClassificationService(
             cast(AudioClassificationCapability, backend)
         ).classify(audio_path, top_k=int(top_k or 5))
@@ -224,7 +224,7 @@ def make_multitask_handlers(backend: ModelBackend) -> dict[str, Callable[..., An
         _guard(VoiceActivityCapability)
         if not audio_path:
             raise gr.Error("请上传音频")
-        _require_ref_audio(audio_path)
+        assert_audio_duration(audio_path, ASR_AUDIO_MAX_SEC)
         segments = VoiceActivityService(cast(VoiceActivityCapability, backend)).vad(audio_path)
         return "\n".join(f"[{s:.2f}s - {e:.2f}s]" for s, e in segments)
 

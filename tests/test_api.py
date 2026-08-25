@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import io
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -203,3 +205,74 @@ def test_list_outputs_empty(client, tmp_path, monkeypatch):
     resp = client.get("/api/outputs")
     assert resp.status_code == 200
     assert resp.json()["count"] == 0
+
+
+def test_list_outputs_no_duration_and_limit(client, tmp_path, monkeypatch):
+    from audioclone.api import server
+
+    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path)
+    for i in range(3):
+        (tmp_path / f"f{i}.wav").write_bytes(b"x")
+
+    # include_duration=false → 无 duration_sec；modified 为 ISO 字符串
+    resp = client.get("/api/outputs?include_duration=false&limit=2")
+    body = resp.json()
+    assert body["count"] == 2
+    assert "duration_sec" not in body["files"][0]
+    assert "T" in body["files"][0]["modified"]
+
+    # limit 超上限被钳制
+    resp = client.get("/api/outputs?limit=99999")
+    assert len(resp.json()["files"]) <= server.MAX_OUTPUTS_LIMIT
+
+
+def test_request_log_carries_trace_id(client):
+    """回归 P1：API 请求日志行应携带 trace_id（extra 不被 filter 覆盖）。"""
+    import logging
+
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = lambda r: records.append(r)  # type: ignore[method-assign]
+    logger = logging.getLogger("audioclone.api.server")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)  # 测试环境根日志默认 WARNING，显式提升以捕获
+    try:
+        client.get("/api/health")
+    finally:
+        logger.removeHandler(handler)
+    http = [r for r in records if str(r.getMessage()).startswith("HTTP")]
+    assert http
+    assert http[0].trace_id is not None
+
+
+# ─── _save_upload 内存安全（不信任客户端 size） ───────────────
+class _FakeUpload:
+    def __init__(self, filename: str, size: int | None, data: bytes):
+        self.filename = filename
+        self.size = size
+        self.file = io.BytesIO(data)
+
+
+def test_save_upload_small_buffered(monkeypatch):
+    from audioclone.api import server
+
+    monkeypatch.setattr(server, "MAX_INLINE_UPLOAD_BYTES", 1024)
+    up = _FakeUpload("a.wav", 100, b"\x00" * 80)
+    path = server._save_upload(up)
+    try:
+        assert Path(path).read_bytes() == b"\x00" * 80
+    finally:
+        os.unlink(path)
+
+
+def test_save_upload_lying_size_streams(monkeypatch):
+    """客户端伪造小 size，但实际内容超阈值 → 转流式写盘，内容完整。"""
+    from audioclone.api import server
+
+    monkeypatch.setattr(server, "MAX_INLINE_UPLOAD_BYTES", 1024)
+    up = _FakeUpload("a.wav", 100, b"\x00" * 3000)  # 声明 100B，实际 3000B
+    path = server._save_upload(up)
+    try:
+        assert len(Path(path).read_bytes()) == 3000
+    finally:
+        os.unlink(path)

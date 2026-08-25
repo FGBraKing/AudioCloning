@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from audioclone.utils.audio import (
+    assert_audio_duration,
     assert_valid_ref_audio,
     concat_segments,
     get_audio_duration,
@@ -15,6 +16,7 @@ from audioclone.utils.audio import (
 )
 
 __all__ = [
+    "assert_audio_duration",
     "assert_valid_ref_audio",
     "concat_segments",
     "get_audio_duration",

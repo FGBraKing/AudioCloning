@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import cast
 
 from audioclone.core.capabilities import Capability, ModelBackend
+from audioclone.core.exceptions import CapabilityError
 
 # 工厂类型：接收 **kwargs，返回后端实例
 BackendFactory = Callable[..., ModelBackend]
@@ -32,10 +33,22 @@ class BackendRegistry:
         """注册一个后端工厂（可按名覆盖）。"""
         self._backends[name] = factory
 
-    def create(self, name: str, **cfg) -> ModelBackend:
-        """按名称创建后端实例。"""
+    def create(
+        self,
+        name: str,
+        capability: type[Capability] | None = None,
+        **cfg,
+    ) -> ModelBackend:
+        """按名称创建后端实例；传入 ``capability`` 时在创建期校验（fail-fast）。"""
         self._ensure(name)
-        return self._backends[name](**cfg)
+        factory = self._backends[name]
+        if (
+            capability is not None
+            and isinstance(factory, type)
+            and not cast(type[ModelBackend], factory).supports(capability)
+        ):
+            raise CapabilityError(f"后端 {name} 不支持能力 {capability.__name__}")
+        return factory(**cfg)
 
     def names(self) -> tuple[str, ...]:
         """已注册的后端名称。"""

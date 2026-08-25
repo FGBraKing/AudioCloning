@@ -2,38 +2,38 @@
 
 | 元信息 | 值 |
 |--------|----|
-| 文档版本 | 3.3 |
-| **适用版本** | **v0.2.4** |
-| 分析基线 | 代码基线 v0.2.2（tag v0.2.2；§9 P1/P2 已实施落地） |
-| 复审轮次 | 第四轮（迭代复审）；§9 P0/P1/P2(大部分) 已实施落地 |
+| 文档版本 | 4.1 |
+| **适用版本** | **v0.2.5** |
+| 分析基线 | 代码基线 v0.2.4（tag v0.2.4；§9 P0/P1/P2 大部分已实施） |
+| 复审轮次 | 第五轮（迭代复审）；§9 P1 全部 + P2 部分已实施落地 |
 | 文档类型 | 架构 / 代码质量分析报告 |
 | 分析视角 | 架构、Python 工程、深度学习音频领域 |
 | 创建日期 | 2026-08-26 |
-| 分析范围 | `src/audioclone/**`（约 3288 行）+ `tests/**`（约 1208 行） |
+| 分析范围 | `src/audioclone/**`（约 3400 行）+ `tests/**`（约 1330 行） |
 | 配套文档 | `USER-GUIDE.md`、`REFACTOR-001-audio-toolbox.md`、`CHANGELOG.md` |
 
 ---
 
 ## 1. 执行摘要
 
-相对 v0.2.2 基线，项目完成 P1/P2 迭代后：配置单源化、共享校验、mypy 全量覆盖（0 errors / 39 文件）、
-覆盖率纳入 handlers/api（72.68%）、trace_id + JSON 日志 + `/api/metrics`、长文本体验、WebUI 多任务 Tab、
-工程化（.env.example / pre-commit / Makefile）均已落地，并新增真实模型集成回归（95 测试全绿）。
+相对 v0.2.4 基线，项目经过四轮迭代（v0.2.1→v0.2.4）已进入**稳定/打磨期**：版本单一来源、
+registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归清理、trace_id 贯穿、未就绪 503、
+`/api/outputs`、小文件内存直读、`to_mono` 声道统一、108 测试 + 75% 覆盖 + 真实模型集成回归。
 
-**结论：架构评分保持「优秀」级别，进入打磨期**。本报告 §9 的 **P0 全部 + P1 全部 + P2 大部分已实施落地**
-（版本单一来源 0.2.3、registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归清理、
-trace_id 贯穿服务层、未就绪→503、多任务输入校验、pyloudnorm extra、metrics 直方图、CI 工程化、
-`/api/outputs` 接口、小文件内存直读、`to_mono` 声道统一）。剩余 P2 项仅「真实模型后端接入」（v0.3.0 路线，需真实模型）。
+**结论：架构评分保持「优秀」，本轮 P0 = 无**。本报告 §9 的 **P1 全部 4 项 + P2 部分已实施落地**
+（trace_id 日志缺陷修复、inline 上传内存安全、`/api/outputs` limit/ISO/跳过时长、多任务校验口径独立、
+`registry.create` 能力 fail-fast、Metrics buckets 可配置、入口/暴露面文档化）。剩余 P2 项
+（ASR 输出结构化解析、真实模型后端）留待后续。
 
 | 维度 | 评分（5 星） | 一句话总评 |
 |------|:---:|------------|
-| 架构分层与可扩展性 | ★★★★★ | 能力驱动四层稳固；registry 已单池化（按名注册 + 按能力查询） |
-| 代码质量（类型/命名/模块化） | ★★★★★ | mypy 全量 0 errors、ruff 全绿、版本单一来源 0.2.3 |
-| 异步/并发正确性 | ★★★★★ | 线程池 + RLock（并发用例）；采样率已实时读取 |
-| 音频信号处理专业性 | ★★★★☆ | 数值安全 + 因果重采样 + 响度接线；ASR 分片已带重叠 |
-| 安全性 | ★★★☆☆ | 上传限流就位；鉴权/HTTPS 仍待部署层落地 |
-| 测试与质量保障 | ★★★★★ | 108 测试 + 75% 覆盖 + 契约测试 + 真实模型集成回归 |
-| 可维护性与可追溯 | ★★★★★ | 版本单一来源；trace_id 贯穿服务层；文档/ADR/CI 齐全 |
+| 架构分层与可扩展性 | ★★★★★ | 能力驱动四层稳固；registry 单池 + 别名层清晰 |
+| 代码质量（类型/命名/模块化） | ★★★★★ | mypy 全量 0 errors、ruff 全绿、版本单一来源 0.2.5 |
+| 异步/并发正确性 | ★★★★★ | 线程池 + RLock；采样率实时读取；trace_id 贯穿（含缺陷见 §3.3） |
+| 音频信号处理专业性 | ★★★★☆ | 数值安全 + 因果重采样 + 分片重叠 + to_mono；ASR 输出解析待结构化 |
+| 安全性 | ★★★☆☆ | 上传限流/内容校验就位；鉴权/HTTPS 与 `/api/outputs` 暴露面待部署护栏 |
+| 测试与质量保障 | ★★★★★ | 117 测试 + 77% 覆盖 + 契约测试 + 真实模型集成回归 |
+| 可维护性与可追溯 | ★★★★★ | 版本单一来源；trace_id 贯穿；文档/ADR/CI 齐全 |
 
 ---
 
@@ -41,32 +41,28 @@ trace_id 贯穿服务层、未就绪→503、多任务输入校验、pyloudnorm 
 
 ### 2.1 现状
 ```
-展示层     webui/(Gradio)   api/(FastAPI, 依赖注入, trace_id + /api/metrics)
+展示层     webui/(Gradio)   api/(FastAPI, 依赖注入, trace_id + /api/metrics + /api/outputs)
 服务层     core/service/*   7 个 Service；RLock 串行、领域异常、进度回调
 能力层     core/capabilities/*  ABC+@abstractmethod，未实现即构造失败
-实现层     core/backends/*  registry 预注册 + config factory 回退
+实现层     core/backends/*  registry 单池（按名注册 + 按能力查询）
 支撑       config(Settings 单源)  exceptions  utils/{audio,validation,logging_utils}  core/text  tools/*
 ```
 
-### 2.2 已改进且确认生效（v0.2.2）
-1. **配置单源化**：全部可调参数收编进 `Settings`（env 前缀 `AUDIOCLONE_` 可覆盖），模块级常量派生（[config.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/config.py#L74-L125)）。
-2. **共享校验**：`utils/validation.py`（`assert_tts_text` / `assert_valid_mode`）贯通 API 与 WebUI。
-3. **类型覆盖**：`cosyvoice_mlx.py` 与 `webui/` 纳入 mypy（0 errors / 39 文件）。
-4. **覆盖率盲区**：`webui/handlers.py`、`api/server.py` 纳入统计；omit 仅剩 UI 布局。
-5. **可观测**：请求 trace_id（`X-Request-ID`）、`AUDIOCLONE_LOG_JSON` 单行 JSON、Prometheus 风格 `/api/metrics`（[metrics.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/api/metrics.py)）。
-6. **响度接线**：`AUDIOCLONE_TTS_NORMALIZE_LOUDNESS` 落盘前可选（[tts_service.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/core/service/tts_service.py#L144-L146)）。
-7. **长文本体验**：段间静音、`progress_cb`、`keep_segments` 逐段落盘。
-8. **WebUI 多任务 Tab**：T2A / A2A / 分类 / VAD 按能力动态可用。
-9. **工程化**：`.env.example`、`.pre-commit-config.yaml`、`Makefile`。
-10. **修复**：`audioclone-download-asr` 缺 `model_id` 无法下载的问题。
+### 2.2 已改进且确认生效（v0.2.3 / v0.2.4）
+1. **版本单一来源**：`__version__` + pyproject `[tool.hatch.version]` 动态读取，API/WebUI 引用。
+2. **registry 单池化**：按名注册 + `supports()` 按能力查询；内置后端声明 `capabilities`；config 仅承载覆盖参数。
+3. **采样率实时读取**：`TTSService.sample_rate` 改属性。
+4. **ASR 分片重叠**：`AUDIOCLONE_ASR_CHUNK_OVERLAP_SEC` + 尾部去重。
+5. **trace_id 贯穿**：contextvars + `TraceIdFilter`，API/WebUI 注入（见 §3.3 缺陷）。
+6. **segments 递归清理**、**未就绪→503**、**多任务输入校验**、**`pyloudnorm` extra**、**metrics 直方图**。
+7. **`/api/outputs`** 历史输出接口、**小文件内存直读**、**`to_mono` 声道统一**。
 
-### 2.3 剩余架构建议（v0.2.3 已落实 ✅）
-| 项 | 现状 | 落实 |
+### 2.3 剩余架构建议（面向 v0.2.5+）
+| 项 | 现状 | 建议 |
 |----|------|------|
-| **版本号硬编码漂移（P0）** | ✅ `audioclone.__version__="0.2.4"` 为唯一来源；pyproject `[tool.hatch.version]` 动态读取；FastAPI `version=`、WebUI 标题/日志引用之 | 代码/文档/tag 一致 |
-| **registry 双池 + config 双源（P0）** | ✅ registry 单池按名注册 + 按能力查询；`list_backends_for` 用 `supports()`；内置后端全部声明 `capabilities`；config 不再含 `factory` 字符串（`dummy` 按任务别名解析到 dummy-tts/dummy-asr） | 工厂唯一来源 = registry |
-| **`TTSService.sample_rate` 快照时序（P0）** | ✅ 改为属性实时读取后端采样率（[tts_service.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/core/service/tts_service.py#L71-L74)） | `load()` 后自动生效 |
-| **后端配置中的 `sample_rate` 字面量** | ✅ 后端 dict 引用 `settings.sample_rate`（[config.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/config.py#L136-L162)） | 无重复魔数 |
+| **后端名别名层** | config 用 `dummy`，registry 用 `dummy-tts/dummy-asr`，`model_loader` 维护别名映射 | 文档明确别名语义；若长期仅一套，可考虑统一命名（破坏性小，需评估 CLI/env 兼容） |
+| **`registry.create` 无能力校验** | 创建时不校验能力，由 Service 构造兜底 | 可扩展 `create(name, capability=None)` 在创建期提前校验，fail-fast |
+| **直连 uvicorn 入口差异** | `uvicorn audioclone.api.server:app`（不经 `main`）未调用 `configure_logging` | 文档注明：结构化日志/trace_id filter 需经 `main`（或 `audioclone-api` 命令）启动 |
 
 ---
 
@@ -74,38 +70,30 @@ trace_id 贯穿服务层、未就绪→503、多任务输入校验、pyloudnorm 
 
 ### 3.1 已达标
 - `mypy src/audioclone` → 0 errors（39 文件，全量）；`ruff check .` → 全绿。
-- 领域异常层级贯通；共享校验收敛；`@gradio_error` 对 `AudioError` 语义化透传。
+- 领域异常贯通、共享校验、低侵入日志初始化、UTC ISO8601 JSON。
 
-### 3.2 已落实（v0.2.2）
-1. **mypy 覆盖盲区**：cosyvoice + webui 补全标注并纳入检查。
-2. **函数内 import 上提**：中间件 / `_json_error` 已上提。
-3. **共享校验**：`utils/validation.py` 贯通 API 与 WebUI。
-4. **handler 类型标注**：`webui/handlers.py` 工厂与内层函数已补齐。
+### 3.2 已落实（v0.2.3 / v0.2.4）
+- 版本单一来源、trace_id 贯穿、`configure_logging` 低侵入、metrics 直方图、`to_mono`。
 
-### 3.3 已落实（v0.2.3）
-1. **版本单一来源（P0）**：`__version__` 单源，pyproject `[tool.hatch.version]` 动态读取，FastAPI/WebUI 引用（0.2.4）。
-2. **trace_id 贯穿服务层**：`contextvars` + `TraceIdFilter`（[logging_utils.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/utils/logging_utils.py)），API 中间件 / WebUI handler 注入，服务层日志自动携带 `[tid=...]`。
-3. **`configure_logging` 低侵入**：仅接管本模块先前添加的 handler（追加式，不破坏外部配置）。
-4. **JsonFormatter 时间**：改为 UTC ISO8601（`datetime`+`timezone.utc`）。
+### 3.3 已落实（v0.2.5）
+1. **trace_id 日志缺陷（P1）**：`TraceIdFilter` 仅在记录**无** `trace_id` 时注入（[logging_utils.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/utils/logging_utils.py#L28-L38)），保留中间件 `extra` 显式值；补捕获日志回归测试（API 请求日志行携带 trace_id）。
+2. **inline 上传内存安全（P1）**：见 §6 —— 阈值感知读取，不信任客户端 `size`。
+3. **`/api/outputs` 暴露面（P1）**：见 §6 —— `limit` 上限 + 部署 AuthN 提示。
 
 ---
 
 ## 4. 深度学习音频领域复审
 
 ### 4.1 已改进（确认生效）
-- 因果重采样（soxr → `resample_poly`）、落盘 `sanitize_audio`、`loudness_normalize`（已接线可选）。
-- ASR 长音频分片、子进程日志重定向 `logs/`、超时可配。
-- 长文本段间静音、进度回调、逐段落盘。
+- 因果重采样、`sanitize_audio`、响度归一化接线、ASR 分片重叠 + 尾部去重、`to_mono` 声道统一、
+  长文本段间静音/进度回调/逐段落盘（递归清理）、`/api/outputs` 时长元数据。
 
-### 4.2 域内细节（已落实 ✅ / 待办）
-| 项 | 现状 | 落实 |
+### 4.2 剩余（域内细节，面向 v0.2.5+）
+| 项 | 现状 | 建议 |
 |----|------|------|
-| **`prune_outputs` 不清理 `segments/` 子目录（P1 缺陷）** | ✅ 已改为递归统计（`rglob`）+ 清理空目录（[audio.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/utils/audio.py#L174-L204)），`keep_segments` 落盘同样受 `AUDIOCLONE_OUTPUT_KEEP_MAX` 约束 | 有专项测试 |
-| **ASR 分片无重叠（P0）** | ✅ 已实现段间重叠（`AUDIOCLONE_ASR_CHUNK_OVERLAP_SEC` 默认 1s）+ 尾部去重（[qwen3_asr_llama.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/core/backends/qwen3_asr_llama.py#L272-L290)） | 有单元测试 |
-| **`loudness_normalize` 依赖未声明** | ✅ pyproject 声明可选 extra `[project.optional-dependencies] loudness = ["pyloudnorm>=0.2.0"]` | 文档注明 |
-| **多任务 handler 输入未校验** | ✅ A2A / 分类 / VAD 复用 `assert_valid_ref_audio`（[handlers.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/webui/handlers.py#L200-L229)） | — |
-| **声道处理不一致** | ✅ 新增 `utils.audio.to_mono(data, mode)`，CosyVoice 与 Qwen3-ASR 统一取第一声道（[audio.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/utils/audio.py#L16-L25)） | 有专项测试 |
-| **ASR 输出解析脆弱** | ⚠️ `_parse_asr_output` 正则兜底 | 可优先结构化（低优先级） |
+| **多任务校验口径（P1）** | ✅ 新增 `assert_audio_duration(path, max_sec)`（[audio.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/utils/audio.py#L64-L78)），A2A/分类/VAD 使用 `ASR_AUDIO_MAX_SEC`（300s），独立于 TTS 参考音频（1~30s） | 有专项测试 |
+| **ASR 输出解析脆弱** | `_parse_asr_output` 正则 `<asr_text>` + 语言前缀清理兜底（[qwen3_asr_llama.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/core/backends/qwen3_asr_llama.py#L298-L304)） | 优先结构化（llama-server JSON），正则兜底（低优先级） |
+| **`/api/outputs` 时长开销** | 逐文件 `get_audio_duration`（读头）O(n)（[server.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/api/server.py#L186-L188)） | 大目录可跳过 duration 或延迟计算（P2） |
 
 ---
 
@@ -115,12 +103,11 @@ trace_id 贯穿服务层、未就绪→503、多任务输入校验、pyloudnorm 
 |------|------|------|
 | FastAPI 合成 | 普通 `def`（线程池） | ✅ 不阻塞事件循环 |
 | MLX 并发 | `RLock` 串行化（并发用例：最大并发合成 = 1） | ✅ |
-| Gradio 并发 | worker 队列 + `default_concurrency_limit` | ✅ |
-| 上传内存 | 流式写临时文件（1MB chunk） | ✅ |
+| 上传内存 | 大文件 1MB 分块；小文件内联直读 | ⚠️ inline 分支按客户端 `size` 判定，伪造可致一次读入至多 100MB（见 §6 P1） |
 | ASR 内存 | 整文件读入后分片（上限 300s≈19MB） | ✅ |
-| 输出清理 | `prune_outputs`（递归 + 空目录清理） | ✅ 含 `segments/` 子目录 |
-| 基准/指标 | `tools/benchmark.py` + `tools/eval_quality.py` | ✅ 已落地；benchmark 冒烟已入 CI |
-| 指标采集 | `/api/metrics`（含直方图；自身不计入请求计数） | ✅ 进程内单例；多 worker 各自计数，需文档注明 |
+| 输出清理 | `prune_outputs` 递归 + 空目录回收 | ✅ |
+| 指标 | `/api/metrics`（直方图；自身不计数；多进程说明） | ✅ |
+| `/api/outputs` | 按 mtime 倒序 + 逐文件读头 | ⚠️ 大目录 O(n)（P2） |
 
 ---
 
@@ -129,12 +116,12 @@ trace_id 贯穿服务层、未就绪→503、多任务输入校验、pyloudnorm 
 | 项 | 现状 | 结论 |
 |----|------|------|
 | 子进程命令 | 列表传参无 shell | ✅ |
-| 上传限流 | 大小 + 流式计数 + 格式 + 时长/采样率校验 | ✅ |
+| 上传限流 | 大小上限 + 分块计数 + 格式 + 时长/采样率校验 | ✅ |
+| **inline 上传内存安全（P1）** | ✅ 已改为阈值感知读取：不信任客户端 `size`，按 1MB 分块、≤阈值内存暂存、超阈值转流式写盘（内存有界）（[server.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/api/server.py#L195-L239)） | 有伪造 size 专项测试 |
+| `/api/outputs`（P1） | ✅ `limit` 上限 200（钳制）；`modified` 改 UTC ISO8601；`include_duration` 可跳过读头（[server.py](file:///Users/francis/Documents/AgentCoding/Starred/AudioCloning/src/audioclone/api/server.py#L164-L195)）；公网部署随 AuthN 保护（文档已注明） | 与 `/api/metrics` 一致 |
 | 临时文件 | `NamedTemporaryFile` 异常/完成后清理 | ✅ |
-| 上传文件名 | 仅取 `Path(filename).suffix` | ✅ |
 | 模型供应链 | model_id 来自 config 白名单 | ✅ |
 | 鉴权 / HTTPS | 无内建 | ⚠️ 部署层反向代理 + AuthN |
-| 指标泄露 | `/api/metrics` 未鉴权 | ⚠️ 内网可接受；公网部署建议随 AuthN 保护 |
 
 ---
 
@@ -142,54 +129,49 @@ trace_id 贯穿服务层、未就绪→503、多任务输入校验、pyloudnorm 
 
 | 类型 | 现状 | 状态 |
 |------|------|------|
-| 单元/架构 | `test_text` / `test_audio` / `test_framework` | ✅ |
-| 契约 | 能力抽象、依赖方向、服务不 import 后端 | ✅ |
-| API 端到端 | `test_api.py`（含 500/400/限流/metrics/X-Request-ID） | ✅ |
+| 单元/架构/契约 | `test_text` / `test_audio` / `test_framework` | ✅ |
+| API 端到端 | `test_api.py`（含 500/400/503/限流/metrics/X-Request-ID/outputs） | ✅ |
 | WebUI handler | `test_webui_handlers.py`（成功/错误/多任务） | ✅ |
-| 可观测 | `test_observability.py`（JsonFormatter/metrics） | ✅ |
+| 可观测 | `test_observability.py`（JsonFormatter/metrics/env 覆盖） | ✅ |
 | 集成 | `test_tts/asr/roundtrip`（真实模型，本机已回归） | ✅ |
-| 覆盖率 | **75.33%**（门槛 60%） | ✅ |
+| 覆盖率 | **76.69%**（门槛 60%） | ✅ |
 | 类型 | mypy 0 errors（全量 39 文件） | ✅ |
 
-**已落实（v0.2.3）：**
-1. `config.Settings` env 覆盖专项测试（`monkeypatch.setenv`）。
-2. `prune_outputs` 递归清理 `segments/` 子目录专项测试。
-3. CI 集成测试移除 `|| true` 兜底（缺模型按 skip 逻辑跳过）；新增 benchmark 冒烟 job。
-4. `/api/outputs` 接口测试、`to_mono` 声道统一测试。
+**已落实（v0.2.5）：**
+1. inline 上传分支单测（小文件缓冲 / 伪造 `size` 转流式）。
+2. `/api/outputs` 的 `limit` 钳制与 `include_duration`/ISO 测试。
+3. `TraceIdFilter` 保留显式 extra + 上下文注入；API 请求日志 trace_id 捕获回归测试。
+4. `assert_audio_duration` 多任务口径；`Metrics(buckets=...)` 自定义桶；`registry.create` 能力 fail-fast。
 
 ---
 
 ## 8. 可维护性与可追溯
 
 - 文档齐全：`REFACTOR-001`（ADR）、`QUALITY-REPORT`（本报告）、`USER-GUIDE`、`CHANGELOG`。
-- 版本化管理：v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 已打 tag；代码版本单一来源 `0.2.4`（无漂移）。
+- 版本化管理：v0.2.0 ~ v0.2.4 已打 tag；代码版本单一来源 `0.2.5`（无漂移）。
 - CI：GitHub Actions（lint + type + test + cov + benchmark 冒烟）。
+- 别名层（config `dummy` ↔ registry `dummy-tts/dummy-asr`）建议在文档/扩展指南中显式说明。
 
 ---
 
-## 9. 优化 / 改进建议（优先级矩阵 · 实施记录）
+## 9. 优化 / 改进建议（优先级矩阵 · 面向 v0.2.5+）
 
-> 以下为 v0.2.3/v0.2.4 迭代的实施记录：**P0 全部 + P1 全部 + P2 大部分已完成 ✅**；剩余 P2 仅「真实模型后端接入」。
-
-### P0 — 必须（✅ 已全部落实）
-- [x] **（版本单一来源）** `audioclone.__version__="0.2.4"` 为唯一来源；pyproject `[tool.hatch.version]` 动态读取；FastAPI `version=`、WebUI 标题/日志引用之；代码/文档/tag 一致。
-- [x] **（registry 统一）** registry 单池按名注册 + 按能力查询；`list_backends_for` 用 `supports()`；内置后端（cosyvoice/qwen3/dummy/dummy-omni）全部声明 `capabilities`；config 去除 `factory` 字符串（`dummy` 按任务别名解析）。
-- [x] **（采样率时序）** `TTSService.sample_rate` 改为属性实时读取后端采样率。
-- [x] **（ASR 分片重叠）** 分片增加段间重叠（`AUDIOCLONE_ASR_CHUNK_OVERLAP_SEC`，默认 1s）+ 尾部去重。
+### P0 — 必须
+- **无**：经四轮加固，当前基线无阻塞性/安全关键缺陷；以下为 P1 缺陷修复与 P2 打磨。
 
 ### P1 — 建议（✅ 已全部落实）
-- [x] **（segments 清理缺陷）** `prune_outputs` 递归统计 + 清理空目录，`keep_segments` 落盘纳入同一保留策略。
-- [x] **（trace_id 贯穿服务层）** `contextvars` + `TraceIdFilter`，API 中间件 / WebUI handler 注入，服务层日志自动携带。
-- [x] **（未就绪语义）** `_get_engine` 未就绪改抛 `BackendUnavailable` → 503（新增 exception_handler）。
-- [x] **（多任务输入校验）** A2A / 分类 / VAD handler 复用 `assert_valid_ref_audio`。
-- [x] **（配置去重）** 后端 dict 的 `sample_rate` 引用 `settings.sample_rate`。
+- [x] **（trace_id 日志缺陷）** `TraceIdFilter` 仅在记录无 `trace_id` 时注入（保留 `extra`），恢复 API 请求日志的 trace_id；补捕获日志回归测试。
+- [x] **（inline 上传内存安全）** `_save_upload` 改为阈值感知读取（不信任客户端 `size`），超阈值转流式写盘；有伪造 `size` 专项测试。
+- [x] **（`/api/outputs` 暴露面）** `limit` 上限 200（钳制）；`modified` 改 UTC ISO8601；`include_duration` 可跳过读头；公网部署 AuthN 保护已在文档注明。
+- [x] **（多任务校验口径）** 新增 `assert_audio_duration(path, max_sec)`，A2A/分类/VAD 使用 `ASR_AUDIO_MAX_SEC`（300s），独立于 TTS 参考音频。
 
 ### P2 — 可选（✅ 部分落实）
-- [x] **（依赖与打包）** pyproject 声明可选 extra `loudness = ["pyloudnorm>=0.2.0"]`；`configure_logging` 改为低侵入（仅接管自身 handler）。
-- [x] **（可观测进阶）** 合成耗时直方图 buckets（累积桶）；`/api/metrics` 自身不计入请求计数；JSON 时间改 UTC ISO8601；多进程指标方案已文档化（`api/metrics.py` 说明）。
-- [x] **（工程化）** benchmark 冒烟入 CI；CI 集成测试移除 `|| true` 兜底；`Settings` env 覆盖专项测试。
-- [x] **（API 扩展）** 新增 `GET /api/outputs` 历史输出接口（名称/路径/字节/修改时间/时长，含 `segments/` 子目录）；上传小文件内存直读 fast path（`AUDIOCLONE_MAX_INLINE_UPLOAD_BYTES`，默认 8MB）；备注：后端消费文件路径，完全零落盘需后端支持内存缓冲（随真实后端 v0.3.0 一并考虑）。
-- [x] **（声道统一）** 新增 `utils.audio.to_mono(data, mode)`，CosyVoice 与 Qwen3-ASR 统一取第一声道。
+- [x] **（`/api/outputs` 细节）** `modified` 改 ISO8601；`limit` 上限钳制并文档化；`include_duration=false` 可跳过 duration。
+- [x] **（可观测）** `Metrics(buckets=...)` 可配置（构造参数，默认 `SYNTH_BUCKETS`）；直连 `uvicorn` 启动日志差异已在 USER-GUIDE 注明。
+- [x] **（registry）** `create(name, capability=None)` 创建期按能力 fail-fast，`model_loader` 传入对应能力。
+- [x] **（命名/别名/暴露面）** config↔registry 别名语义、`/api/metrics` 与 `/api/outputs` 暴露面 AuthN 已在 USER-GUIDE §4.2/§12 注明。
+- [x] **（测试补齐）** inline 分支、`/api/outputs` limit/ISO/时长、`assert_audio_duration`、`Metrics` 自定义桶、`registry.create` 能力、HTTP 日志 trace_id。
+- [ ] **（ASR 解析）** `_parse_asr_output` 优先结构化（llama-server JSON）—— 未实施（低优先级）。
 - [ ] **（真实后端）** T2A / A2A / 分类 / VAD 真实模型后端接入（v0.3.0 路线）—— 未实施。
 
 ---
@@ -197,10 +179,10 @@ trace_id 贯穿服务层、未就绪→503、多任务输入校验、pyloudnorm 
 ## 10. 版本路线
 
 ```
-v0.2.4（本版）   P0 全部 + P1 全部 + P2 大部分已实施（版本源/registry 单池/采样率/分片重叠/segments 清理/trace_id 贯穿/
-                 未就绪 503/输入校验/依赖与可观测/CI 工程化 /api/outputs/小文件内存直读/to_mono 声道统一）
-v0.2.4+         剩余 P2：真实模型后端接入（需真实模型）
+v0.2.5（本版）   P1 全部 4 项 + P2 部分已实施（trace_id 日志/inline 内存安全/outputs 暴露面/多任务口径/
+                 registry 能力 fail-fast/Metrics buckets/文档化）
+v0.2.5+         剩余 P2：ASR 输出结构化解析（低优先级）
 v0.3.0          接入 T2A/A2A/分类/VAD 真实后端；零落盘内存缓冲路径
 ```
 
-> 注：本报告**适用版本标注为 v0.2.4**；分析基线为代码基线 v0.2.2（tag）。§9 中 **P0 全部与 P1 全部、P2 大部分已实施落地**，剩余 P2 仅「真实模型后端接入」。
+> 注：本报告**适用版本标注为 v0.2.5**；分析基线为代码基线 v0.2.4（tag）。§9 中 **P1 全部 4 项 + P2 部分已实施落地**，剩余 P2 项（ASR 结构化解析、真实模型后端）留待后续。

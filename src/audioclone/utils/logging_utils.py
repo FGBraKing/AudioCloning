@@ -26,10 +26,15 @@ def get_trace_id() -> str | None:
 
 
 class TraceIdFilter(logging.Filter):
-    """把当前上下文 trace_id 注入日志记录（JSON 与文本 formatter 均可消费）。"""
+    """把当前上下文 trace_id 注入日志记录（JSON 与文本 formatter 均可消费）。
+
+    仅当记录**未显式携带** ``trace_id`` 时注入（保留 ``extra={"trace_id": ...}`` 的值），
+    避免覆盖中间件/调用方显式传入的 trace_id。
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.trace_id = get_trace_id()
+        if getattr(record, "trace_id", None) is None:
+            record.trace_id = get_trace_id()
         return True
 
 

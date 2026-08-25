@@ -35,30 +35,33 @@ _TASK_ALIASES: dict[tuple[str, str], str] = {
 }
 
 
-def _create(kind: str, name: str | None, default: str, overrides: dict) -> ModelBackend:
+def _create(
+    kind: str,
+    name: str | None,
+    default: str,
+    overrides: dict,
+    capability: type | None = None,
+) -> ModelBackend:
     name = name or default
     config = TTS_BACKENDS if kind == "tts" else ASR_BACKENDS
     if name not in config:
         raise KeyError(f"未知的{kind}后端: {name}（可用: {', '.join(config)}）")
 
     reg_name = _TASK_ALIASES.get((kind, name), name)
-    factory = registry.get_factory(reg_name)
-    if factory is None:
-        raise KeyError(f"后端未在注册表登记: {reg_name}")
-
     spec = dict(config[name])
     spec.update(overrides or {})
-    return factory(**spec)
+    # 创建期按能力校验（fail-fast），由 registry.create 实施
+    return registry.create(reg_name, capability=capability, **spec)
 
 
 def create_tts_backend(name: str | None = None, **overrides) -> ModelBackend:
     """按名称创建 TTS 后端；未指定名则用配置默认。返回的后端应提供 ``TextToSpeechCapability``。"""
-    return _create("tts", name, TTS_BACKEND, overrides)
+    return _create("tts", name, TTS_BACKEND, overrides, capability=TextToSpeechCapability)
 
 
 def create_asr_backend(name: str | None = None, **overrides) -> ModelBackend:
     """按名称创建 ASR 后端；未指定名则用配置默认。返回的后端应提供 ``SpeechRecognitionCapability``。"""
-    return _create("asr", name, ASR_BACKEND, overrides)
+    return _create("asr", name, ASR_BACKEND, overrides, capability=SpeechRecognitionCapability)
 
 
 def list_backend_capabilities(backend: ModelBackend) -> list[str]:
