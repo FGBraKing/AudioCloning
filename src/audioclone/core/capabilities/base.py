@@ -11,13 +11,23 @@ class Capability:
 
 
 class ModelBackend:
-    """模型后端的通用基类：统一身份标识与能力查询。"""
+    """模型后端的通用基类：统一身份标识与能力查询。
+
+    能力来源二选一：
+    - 显式声明 ``capabilities`` 类属性（推荐，声明式）；
+    - 未声明时回退到「真实继承关系」判断（``issubclass``）。
+    """
 
     name: str
+    capabilities: tuple[type[Capability], ...] = ()
 
     @classmethod
     def supports(cls, capability: type[Capability]) -> bool:
         """当前后端是否实现了指定能力。"""
+        if cls.capabilities:
+            explicit = any(issubclass(c, capability) for c in cls.capabilities)
+            inherited = issubclass(cls, capability)
+            return explicit or inherited
         return issubclass(cls, capability)
 
     def load(self) -> None:

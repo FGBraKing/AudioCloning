@@ -29,7 +29,7 @@ from audioclone.config import ALLOWED_UPLOAD_EXT, MAX_TEXT_LENGTH, MAX_UPLOAD_BY
 from audioclone.core import TTSService, create_tts_backend
 from audioclone.core.capabilities import TextToSpeechCapability
 from audioclone.core.exceptions import InvalidAudioInput, ModelLoadError
-from audioclone.utils.audio import validate_ref_audio
+from audioclone.utils.audio import assert_valid_ref_audio
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,24 @@ app = FastAPI(
     version="0.2.1",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def _request_log(request: Request, call_next):
+    """请求日志：记录方法、路径、状态码与耗时。"""
+    import time as _time
+
+    start = _time.time()
+    response = await call_next(request)
+    elapsed = _time.time() - start
+    logger.info(
+        "HTTP %s %s -> %s (%.0fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed * 1000,
+    )
+    return response
 
 
 def _get_engine(request: Request) -> TTSService:
@@ -174,10 +192,8 @@ def clone_voice(
     tmp_path = _save_upload(ref_audio)
 
     try:
-        # 时长 / 采样率校验
-        ok, msg = validate_ref_audio(tmp_path)
-        if not ok:
-            raise InvalidAudioInput(msg)
+        # 时长 / 采样率校验（不合法抛 InvalidAudioInput → 400）
+        assert_valid_ref_audio(tmp_path)
 
         start = time.time()
         output_path = engine.synthesize_to_file(
@@ -209,7 +225,7 @@ def clone_voice(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AudioCloning API Server", prog="audioclone-api")
-    parser.add_argument("--host", type=str, default="0.0.0.0")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址（默认仅本机）")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 

@@ -1,9 +1,10 @@
-"""文本处理模块 — 长文本分段、归一化。"""
+"""文本处理模块 — 分段器接口、长文本分段、归一化。"""
 
 from __future__ import annotations
 
 import logging
 import re
+from abc import ABC, abstractmethod
 
 from audioclone.config import MAX_TEXT_LENGTH
 
@@ -13,6 +14,24 @@ logger = logging.getLogger(__name__)
 SENTENCE_ENDS = r"[。！？.!?；;\n]"
 # 逗号/空格等次级切割点
 SECONDARY_BREAKS = "，,"
+
+
+class TextSegmenter(ABC):
+    """长文本分段器接口。
+
+    便于接入不同分句策略（标点 / NLP 分句 / 情感粒度等）。
+    """
+
+    @abstractmethod
+    def split(self, text: str, max_len: int) -> list[str]:
+        """将文本切分为不超过 ``max_len`` 的若干段。"""
+
+
+class SentenceTextSegmenter(TextSegmenter):
+    """基于句末标点的默认分段器。"""
+
+    def split(self, text: str, max_len: int) -> list[str]:
+        return split_long_text(text, max_len=max_len)
 
 
 def split_long_text(text: str, max_len: int = MAX_TEXT_LENGTH) -> list[str]:

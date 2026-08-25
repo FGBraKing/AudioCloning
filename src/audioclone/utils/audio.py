@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def validate_ref_audio(path: str) -> tuple[bool, str]:
-    """校验参考音频是否合法，返回 ``(is_valid, message)``。"""
+    """校验参考音频是否合法，返回 ``(is_valid, message)``。
+
+    非抛异常的兼容接口；新代码建议使用 :func:`assert_valid_ref_audio`。
+    """
     p = Path(path)
     if not p.exists():
         return False, f"文件不存在: {path}"
@@ -35,6 +38,15 @@ def validate_ref_audio(path: str) -> tuple[bool, str]:
         return False, f"采样率过低 ({sr}Hz < {REF_AUDIO_MIN_SR}Hz)"
 
     return True, f"音频合法: {duration:.1f}s, {sr}Hz"
+
+
+def assert_valid_ref_audio(path: str) -> None:
+    """校验参考音频，不合法时抛 ``InvalidAudioInput``（推荐用于上层业务）。"""
+    from audioclone.core.exceptions import InvalidAudioInput  # 延迟导入避免循环
+
+    ok, msg = validate_ref_audio(path)
+    if not ok:
+        raise InvalidAudioInput(msg)
 
 
 def get_audio_duration(path: str) -> float:
@@ -115,6 +127,33 @@ def sanitize_audio(
         target = min(peak_scale, max_peak)
         x = (x * (target / peak)).astype(np.float32)
 
+    return x
+
+
+def loudness_normalize(
+    audio: np.ndarray,
+    sample_rate: int,
+    target_lufs: float = -16.0,
+) -> np.ndarray:
+    """按 EBU R128 响度（LUFS）归一化；pyloudnorm 不可用时回退到峰值归一化。
+
+    先做数值安全，再做响度匹配，最后限幅防削波。
+    """
+    x = sanitize_audio(audio)
+    if x.size == 0:
+        return x
+
+    try:
+        import pyloudnorm as pyln
+
+        meter = pyln.Meter(sample_rate)
+        loudness = meter.integrated_loudness(x)
+        if not np.isfinite(loudness):
+            return x
+        x = pyln.normalize.loudness(x, loudness, target_lufs)
+        x = np.clip(x, -1.0, 1.0).astype(np.float32)
+    except Exception:  # noqa: BLE001 - pyloudnorm 不可用/失败时保持峰值归一化结果
+        logger.debug("loudness_normalize 回退到峰值归一化")
     return x
 
 

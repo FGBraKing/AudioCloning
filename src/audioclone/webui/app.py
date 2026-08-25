@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import time
 
 # 本地回环不受系统代理影响（在 gradio/httpx 等网络库导入前设置）
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
@@ -46,14 +47,18 @@ from audioclone.webui.handlers import (
 logger = logging.getLogger(__name__)
 
 
-def build_ui(engine: TTSService, asr_engine: ASRService) -> gr.Blocks:
-    """构建完整 Gradio 界面。"""
+def build_ui(
+    engine: TTSService,
+    asr_engine: ASRService,
+    tts_load_sec: float | None = None,
+) -> gr.Blocks:
+    """构建完整 Gradio 界面。``tts_load_sec`` 为模型加载耗时（秒），用于状态面板展示。"""
     demo = gr.Blocks(title="AudioCloning - 个人声音克隆系统")
 
     with demo:
         gr.Markdown(
             """
-            # AudioCloning - 音频模型体验工具箱 v0.1.1
+            # AudioCloning - 音频模型体验工具箱 v0.2.1
             基于 Fun-CosyVoice3-0.5B (MLX) | 支持零样本克隆、跨语言合成、自然语言指令控制、语音识别
             """
         )
@@ -68,7 +73,10 @@ def build_ui(engine: TTSService, asr_engine: ASRService) -> gr.Blocks:
             if asr_ready
             else "⚠️ **ASR 服务:** 未就绪"
         )
-        device_str = f"🍎 **框架:** Apple MLX | 采样率: {engine.sample_rate}Hz | Metal GPU 加速"
+        load_info = f" | 模型加载耗时: {tts_load_sec:.1f}s" if tts_load_sec is not None else ""
+        device_str = (
+            f"🍎 **框架:** Apple MLX | 采样率: {engine.sample_rate}Hz | Metal GPU 加速{load_info}"
+        )
         server_str = f"🌐 **WebUI:** http://localhost:{GRADIO_PORT} | **API:** http://localhost:8000"
 
         demo.load(
@@ -188,6 +196,11 @@ def build_ui(engine: TTSService, asr_engine: ASRService) -> gr.Blocks:
             "- ASR 服务首次启动约需 10~20 秒（模型加载到 Metal GPU）\n"
             "- 若启动报 503/网络错误，请确认系统代理已绕过 localhost（项目已默认配置）\n"
             "- 若端口被占用，使用 `--port` 参数指定其他端口\n"
+            "\n"
+            "### 📂 输出说明\n"
+            "\n"
+            "- 合成音频保存于 `outputs/` 目录\n"
+            "- 可通过环境变量 `AUDIOCLONE_OUTPUT_KEEP_MAX` 设置保留文件数上限（`>0` 自动清理旧输出，`0` 不清理）\n"
         )
 
     return demo
@@ -224,9 +237,11 @@ def main() -> None:
             tts_opts["model_dir"] = args.model_dir  # 显式传入时才覆盖，兼容 dummy 等后端
         tts_backend = create_tts_backend(**tts_opts)
         logger.info("正在加载 TTS 后端: %s (能力: %s)...", tts_backend.name, ", ".join(list_backend_capabilities(tts_backend)))
+        load_start = time.time()
         tts_backend.load()
+        tts_load_sec = time.time() - load_start
         engine = TTSService(tts_backend)
-        logger.info("TTS 服务就绪 (采样率 %s)", engine.sample_rate)
+        logger.info("TTS 服务就绪 (采样率 %s, 加载耗时 %.1fs)", engine.sample_rate, tts_load_sec)
 
         # 初始化 ASR 服务（后端经 model_loader 创建，默认 qwen3-asr-llama）
         asr_opts: dict = {}
@@ -250,7 +265,7 @@ def main() -> None:
             logger.info("ASR 功能已禁用 (--no_asr)")
 
         # 构建 UI
-        demo = build_ui(engine, asr_engine)
+        demo = build_ui(engine, asr_engine, tts_load_sec=tts_load_sec)
         demo.queue(max_size=GRADIO_MAX_QUEUE, default_concurrency_limit=GRADIO_CONCURRENCY)
 
         demo.launch(

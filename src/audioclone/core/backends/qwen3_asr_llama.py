@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import httpx
+import numpy as np
 import soundfile as sf
 
 from audioclone.config import (
@@ -44,11 +45,13 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         model_dir: str | Path | None = None,
         host: str = ASR_SERVER_HOST,
         port: int = ASR_SERVER_PORT,
+        max_segment_sec: float = 60.0,
     ) -> None:
         self.model_dir = Path(model_dir) if model_dir else ASR_MODEL_DIR
         self.host = host
         self.port = port
         self.base_url = f"http://{self.host}:{self.port}"
+        self.max_segment_sec = max_segment_sec  # 长音频分片阈值（秒），避免整段 base64 膨胀
 
         self._process: subprocess.Popen[str] | None = None
         self._model_path: Path | None = None
@@ -195,7 +198,26 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         if not self.is_ready():
             raise RuntimeError("ASR 服务未就绪，请确认 llama-server 已启动")
 
-        audio_b64 = self._prepare_audio(audio_path)
+        data = self._load_audio_array(audio_path)
+        chunks = self._chunk_audio(data)
+
+        logger.info("[ASR] 开始识别: %s（%d 段）", audio_path, len(chunks))
+        start_time = time.time()
+
+        texts: list[str] = []
+        for i, chunk in enumerate(chunks):
+            seg_text = self._transcribe_chunk(chunk)
+            if seg_text:
+                texts.append(seg_text)
+            logger.info("[ASR] 段 %d/%d 完成", i + 1, len(chunks))
+
+        text = " ".join(texts)
+        logger.info("[ASR] 识别完成，耗时 %.2fs，结果: %s...", time.time() - start_time, text[:80])
+        return text
+
+    def _transcribe_chunk(self, audio: np.ndarray) -> str:
+        """对单个 16kHz 音频片段发起一次识别请求。"""
+        audio_b64 = self._encode_wav_base64(audio)
 
         messages = [
             {
@@ -213,9 +235,6 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
             "temperature": 0.0,
         }
 
-        logger.info("[ASR] 开始识别: %s", audio_path)
-        start_time = time.time()
-
         try:
             resp = httpx.post(
                 f"{self.base_url}/v1/chat/completions",
@@ -232,18 +251,24 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
 
         result = resp.json()
         raw_text = result["choices"][0]["message"]["content"].strip()
-        text = self._parse_asr_output(raw_text)
+        return self._parse_asr_output(raw_text)
 
-        logger.info("[ASR] 识别完成，耗时 %.2fs，结果: %s...", time.time() - start_time, text[:80])
-        return text
-
-    def _prepare_audio(self, audio_path: str) -> str:
-        """读取音频并转为 16kHz mono WAV 的 base64 编码。"""
+    def _load_audio_array(self, audio_path: str) -> np.ndarray:
+        """读取音频为 16kHz mono float32 数组（重采样）。"""
         data, sr = sf.read(audio_path, dtype="float32")
         if data.ndim > 1:
             data = data.mean(axis=1)
-        data = resample_audio(data, int(sr), ASR_SAMPLE_RATE)
+        return resample_audio(data, int(sr), ASR_SAMPLE_RATE)
 
+    def _chunk_audio(self, data: np.ndarray) -> list[np.ndarray]:
+        """按 ``max_segment_sec`` 将长音频切段；短音频返回单段。"""
+        max_len = max(1, int(self.max_segment_sec * ASR_SAMPLE_RATE))
+        if len(data) <= max_len:
+            return [data]
+        return [data[i : i + max_len] for i in range(0, len(data), max_len)]
+
+    @staticmethod
+    def _encode_wav_base64(data: np.ndarray) -> str:
         buffer = io.BytesIO()
         sf.write(buffer, data, ASR_SAMPLE_RATE, format="WAV")
         return base64.b64encode(buffer.getvalue()).decode("utf-8")

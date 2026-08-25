@@ -41,7 +41,7 @@ MAX_TEXT_LENGTH = 300                  # 单次合成最大字符数
 
 # ─── WebUI 配置 ─────────────────────────────────────────────
 GRADIO_PORT = 7860
-GRADIO_HOST = "0.0.0.0"
+GRADIO_HOST = "127.0.0.1"        # 默认仅本机访问（部署护栏）；公网服务需反向代理 + HTTPS
 GRADIO_MAX_QUEUE = 4
 GRADIO_CONCURRENCY = 2
 

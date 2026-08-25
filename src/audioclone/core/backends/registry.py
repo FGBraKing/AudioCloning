@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from audioclone.core.capabilities import ModelBackend
+from audioclone.core.capabilities import Capability, ModelBackend
 
 # 工厂类型：接收 **kwargs，返回后端实例
 BackendFactory = Callable[..., ModelBackend]
@@ -60,6 +60,22 @@ class BackendRegistry:
     def get_asr_factory(self, name: str):
         """返回已注册的 ASR 后端工厂（未注册返回 None）。"""
         return self._asr.get(name)
+
+    def list_backends_for(self, capability: type[Capability]) -> tuple[str, ...]:
+        """返回支持指定能力的所有后端名称（跨 tts/asr，去重）。
+
+        按能力聚合查询，便于「为某任务列出可用后端」。
+        """
+        names: list[str] = []
+        seen: set[str] = set()
+        for pool in (self._tts, self._asr):
+            for name, factory in pool.items():
+                if name in seen:
+                    continue
+                if isinstance(factory, type) and issubclass(factory, capability):
+                    names.append(name)
+                    seen.add(name)
+        return tuple(names)
 
 
 # 模块级单例（供需要全局注册的场景使用）

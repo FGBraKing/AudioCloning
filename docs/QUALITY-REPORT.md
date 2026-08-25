@@ -32,7 +32,7 @@
 | 异步/并发正确性 | ★★★★☆ | 线程池 + RLock 串行，问题已解 |
 | 音频信号处理专业性 | ★★★★☆ | 数值安全 + 因果重采样到位 |
 | 安全性 | ★★★☆☆ | 上传限流就位，鉴权/HTTPS 仍待部署层落地 |
-| 测试与质量保障 | ★★★★☆ | 57 测试 + 65% 覆盖 + 契约测试 |
+| 测试与质量保障 | ★★★★☆ | 57 测试 + 63% 覆盖 + 契约测试 |
 | 可维护性与可追溯 | ★★★★☆ | ADR / 文档 / 版本化齐全 |
 
 ---
@@ -54,11 +54,11 @@
 3. **能力契约强制**：未实现能力方法即 `TypeError`（`test_capability_must_be_implemented` 覆盖）。
 4. **依赖方向**：服务层不 import 具体后端（`test_service_never_imports_backends`），单向性由测试固化。
 
-### 2.3 剩余架构建议
+### 2.3 架构建议（本轮已落实项以 ✅ 标注）
 | 项 | 现状 | 建议 |
 |----|------|------|
-| `registry` 仍以 `kind`（tts/asr）二元划分 | 能力是多维的，未来后端可能跨 kind | 演进为「按能力聚合查询」：`list_backends_for(capability)` |
-| `Capability` 与 `ModelBackend` 两套基类并存 | 语义重复 | 后续可将 `Capability` 并入 `ModelBackend` 的 `__capabilities__` 元数据（声明式），减少继承面 |
+| `registry` 的 kind 二元划分 | ✅ 已实现 `list_backends_for(capability)`（按能力聚合查询，跨 tts/asr 去重） | 后续可据此为「任务」动态选择后端 |
+| `Capability` 与 `ModelBackend` 两套基类并存 | 语义重复 | ✅ 已引入 `capabilities` 声明式元数据 + `supports()`（未声明时兼容继承关系判断） |
 | 上传临时文件用 `tempfile` | 已安全 | 可考虑 `UploadFile` 直接流式读入内存数组（对小文件）减少 IO |
 | WebUI 仍同步 handler | gradio worker 调度可接受 | 保留；若未来多后端并发，为每个 Service 实例化独立锁 |
 
@@ -71,11 +71,10 @@
 - 领域异常层级（`AudioError` → `InvalidAudioInput/CapabilityError/BackendUnavailable/ModelLoadError`）已生效并贯通服务层与 API。
 - `from __future__ import annotations` + `list[str]`/`Path`/`np.ndarray` 等现代标注统一。
 
-### 3.2 剩余
-1. **异常语义未完全收敛**：`utils.audio.validate_ref_audio` 仍返回 `(bool, str)` 而非抛异常；`get_audio_duration` 仍吞异常返回 `0.0`。
-   - 建议：提供 `assert_valid_ref_audio`（抛 `InvalidAudioInput`）与 `get_audio_duration` 抛 `InvalidAudioInput` 的变体，上层少判断。
-2. **日志为文本**：无 trace_id / JSON 结构化。本地工具可接受，生产可观测建议结构化。
-3. **WebUI handler 重复 try/except + gr.Error**：6 个 handler 有重复样板，可提取装饰器 `@gradio_error`。
+### 3.2 已落实（相对复审）
+1. **异常语义收敛**：新增 `assert_valid_ref_audio`（不合法抛 `InvalidAudioInput`），API 与 WebUI handler 统一改走该接口；`validate_ref_audio` 保留为兼容接口。
+2. **结构化日志**：API 增加请求日志中间件（方法/路径/状态码/耗时）；生产可观测建议再叠加 trace_id / JSON。
+3. **WebUI handler 去样板**：提取 `@gradio_error` 装饰器（`gr.Error` 透传、其余异常记录后转 `gr.Error`），6 个 handler 统一复用。
 
 ---
 
@@ -86,14 +85,14 @@
 - 落盘统一 `sanitize_audio`（去 NaN/Inf → 去 DC → 限幅 → 峰值归一化）。
 - ASR 子进程 stderr 重定向日志文件，杜绝 PIPE 阻塞；超时可配 `ASR_HTTP_TIMEOUT`。
 
-### 4.2 剩余（进阶）
-| 项 | 现状 | 建议 |
+### 4.2 剩余（进阶，本轮已落实 ✅）
+| 项 | 现状 | 落实 |
 |----|------|------|
-| 长音频 ASR 走整段 base64 HTTP | 内存/请求体膨胀 | 加分片/流式（Qwen3-ASR 支持多段输入时）或后端自适应裁剪 |
-| TTS 分段仅按标点 | 无语义/情感粒度 | 预留分段的 `TextSegmenter` 接口，便于接 NLP 分句 |
-| 无响度归一化（LUFS） | 峰值归一化保证不削波，但响度一致性一般 | 可选引入 `pyloudnorm`（已随依赖链安装）做 EBU R128 归一 |
-| 无客观指标 | 无法度量合成质量退化 | 增加 `eval/` 脚本（MCD / PESQ 需外部工具，或频谱距离简化版） |
-| `outputs` 已可清理 | 有上限 | 建议在 WebUI 提示输出位置与清理策略 |
+| 长音频 ASR 整段 base64 | ✅ 已实现分片：`max_segment_sec` 阈值切段 + 逐段识别 + 日志进度 | 段级请求，内存/请求体可控 |
+| TTS 分段仅按标点 | ✅ 已接口化：`TextSegmenter` 抽象 + `SentenceTextSegmenter` 默认实现 | 可插 NLP 分句策略 |
+| 无响度归一化（LUFS） | ✅ 已实现 `loudness_normalize`（EBU R128，`pyloudnorm` 不可用回退峰值归一化） | 合成链路可选启用 |
+| 无客观指标 | ✅ 已增加 `tools/eval_quality.py`（频谱距离 / MCD 简化版） | 需成对参考音频 |
+| `outputs` 清理提示 | ✅ 已在 WebUI 提示输出位置与 `AUDIOCLONE_OUTPUT_KEEP_MAX` 清理策略 | — |
 
 ---
 
@@ -104,9 +103,10 @@
 | FastAPI 合成 | 普通 `def`（线程池） | ✅ 不阻塞事件循环 |
 | MLX 并发 | `RLock` 串行化 | ✅ 串行安全；注意 RLock 会排队，高并发为吞吐受限于单模型 |
 | Gradio 并发 | worker 队列 + `default_concurrency_limit` | ✅ 受控 |
-| 冷启动 | 惰性加载，无进度 | ➕ 建议在 WebUI 状态面板展示加载进度/耗时 |
+| 冷启动 | 惰性加载 | ✅ 已在 WebUI 状态面板展示模型加载耗时（`tts_load_sec`） |
 | 上传内存 | 流式写临时文件 | ✅ 内存可控 |
-| 输出清理 | `prune_outputs` | ✅ 可选启用 |
+| 输出清理 | `prune_outputs` | ✅ 可选启用（`AUDIOCLONE_OUTPUT_KEEP_MAX`） |
+| 基准/指标 | `tools/benchmark.py` + `tools/eval_quality.py` | ✅ 已落地 |
 
 ---
 
@@ -131,18 +131,19 @@
 | 契约 | 能力抽象、服务依赖方向、服务不 import 后端 | ✅ |
 | API 端到端 | `test_api.py`（TestClient + dummy-omni，含限流/校验/异常） | ✅ |
 | 集成 | `test_tts/asr/roundtrip`（需真实模型） | ⚠️ 缺模型时跳过 |
-| 覆盖率 | 65.47%（门槛 60%） | ✅ |
+| 覆盖率 | 62.87%（门槛 60%） | ✅ |
 | 类型 | mypy 0 errors | ✅ |
 
-**剩余**：集成链路（真实模型）的端到端回归基线、性能基准脚本、CI（GitHub Actions）尚未配置。
+**已补充**：性能基准脚本 `tools/benchmark.py`（冷启动 / 单次合成 / 并发）、客观质量脚本 `tools/eval_quality.py`（频谱距离 / MCD 简化版）、GitHub Actions CI（lint + type + test + cov）均已落地。
+**剩余**：集成链路（真实模型）的端到端回归基线 —— 仅缺模型环境，已在 CI 中显式跳过。
 
 ---
 
 ## 8. 可维护性与可追溯
 
-- 文档齐全：`REFACTOR-001`（ADR + 能力演进）、`QUALITY-REPORT`（本报告）、`USER-GUIDE`。
-- 版本化管理：v0.2.0 已打 tag；v0.2.1 随本报告发布。
-- **缺失**：`CHANGELOG.md`（推荐）与 CI 配置。
+- 文档齐全：`REFACTOR-001`（ADR + 能力演进）、`QUALITY-REPORT`（本报告）、`USER-GUIDE`、`CHANGELOG`。
+- 版本化管理：v0.2.0 / v0.2.1 已打 tag；v0.2.1 随本报告发布。
+- CI：GitHub Actions（lint + type + test + cov）已配置。
 
 ---
 

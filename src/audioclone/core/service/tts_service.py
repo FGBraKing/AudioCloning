@@ -13,10 +13,14 @@ from typing import Any
 
 import numpy as np
 
-from audioclone.config import OUTPUT_DIR, OUTPUT_KEEP_MAX
+from audioclone.config import MAX_TEXT_LENGTH, OUTPUT_DIR, OUTPUT_KEEP_MAX
 from audioclone.core.capabilities import TTS_MODES, TextToSpeechCapability
 from audioclone.core.exceptions import CapabilityError, InvalidAudioInput
-from audioclone.core.text import normalize_text, split_long_text
+from audioclone.core.text import (
+    SentenceTextSegmenter,
+    TextSegmenter,
+    normalize_text,
+)
 from audioclone.utils.audio import prune_outputs, save_audio
 
 logger = logging.getLogger(__name__)
@@ -25,7 +29,11 @@ logger = logging.getLogger(__name__)
 class TTSService:
     """TTS 业务服务。需传入一个提供 ``TextToSpeechCapability`` 的后端。"""
 
-    def __init__(self, backend: TextToSpeechCapability) -> None:
+    def __init__(
+        self,
+        backend: TextToSpeechCapability,
+        segmenter: TextSegmenter | None = None,
+    ) -> None:
         if not isinstance(backend, TextToSpeechCapability):
             raise CapabilityError(
                 f"后端 {getattr(backend, 'name', backend)} 不支持文本转语音能力 "
@@ -35,6 +43,7 @@ class TTSService:
         self.sample_rate = backend.sample_rate
         # 可重入锁：合成间可嵌套调用（synthesize_to_file → infer_*）
         self._lock = threading.RLock()
+        self._segmenter = segmenter or SentenceTextSegmenter()
 
     # ─── 单段推理（暴露给直接调用的场景） ─────────────────────
     def infer_zero_shot(
@@ -96,7 +105,7 @@ class TTSService:
         if mode not in TTS_MODES:
             raise InvalidAudioInput(f"未知的推理模式: {mode}")
 
-        segments = split_long_text(text)
+        segments = self._segmenter.split(text, MAX_TEXT_LENGTH)
         if not segments:
             raise InvalidAudioInput("合成文本为空")
 

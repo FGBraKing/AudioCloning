@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    name: lint & type & test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type check (mypy)
+        run: uv run mypy src/audioclone
+
+      - name: Unit / contract / API tests (no integration)
+        run: uv run pytest -m "not integration" --cov=audioclone --cov-report=term-missing
+
+      # 集成测试需要真实模型与 llama.cpp，CI 环境缺失时自动跳过（见各测试的 skip 逻辑）
+      - name: Integration tests (best-effort)
+        run: uv run pytest -m integration -q --no-cov || true
