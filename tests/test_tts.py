@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # 会话级服务，避免重复加载模型
 _engine: TTSService | None = None
+_instruct_engine: TTSService | None = None
 
 
 @pytest.fixture(scope="module")
@@ -24,6 +25,18 @@ def engine(tts_model_dir: str) -> TTSService:
         backend = create_tts_backend(model_dir=tts_model_dir)
         _engine = TTSService(backend)
     return _engine
+
+
+@pytest.fixture(scope="module")
+def instruct_engine(tts_instruct_dir: str) -> TTSService:
+    """CustomVoice 后端（支持 instruct 模式），避免与 base 后端交叉加载。"""
+    global _instruct_engine
+    if _instruct_engine is None:
+        backend = create_tts_backend(
+            name="qwen3-tts-customvoice-mlx", model_dir=tts_instruct_dir
+        )
+        _instruct_engine = TTSService(backend)
+    return _instruct_engine
 
 
 def _ref_audio(name: str) -> str:
@@ -66,11 +79,10 @@ def test_cross_lingual(engine: TTSService):
 
 
 @pytest.mark.integration
-def test_instruct(engine: TTSService):
-    out = engine.synthesize_to_file(
+def test_instruct(instruct_engine: TTSService):
+    out = instruct_engine.synthesize_to_file(
         mode="instruct",
         text="今天天气真好，适合出去走走。",
-        ref_audio_path=_ref_audio("zero_shot_prompt.wav"),
         instruct_text="请用开心的语气说",
         filename="test_instruct.wav",
     )

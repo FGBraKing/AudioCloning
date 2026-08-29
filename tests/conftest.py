@@ -19,11 +19,31 @@ os.environ.pop("all_proxy", None)
 @pytest.fixture(scope="session")
 def tts_model_dir() -> str:
     """可用的 TTS 模型目录；未下载则跳过集成测试。"""
-    from audioclone.config import MODEL_DIR
+    from audioclone.config import QWEN3_TTS_MODEL_DIR, QWEN3_TTS_MODEL_IDS
 
-    if not MODEL_DIR.exists():
-        pytest.skip(f"TTS 模型目录不存在，请先运行: uv run audioclone-download-tts ({MODEL_DIR})")
-    return str(MODEL_DIR)
+    model_dir = QWEN3_TTS_MODEL_DIR / "qwen3_tts_base"
+    if not model_dir.exists():
+        pytest.skip(
+            f"TTS 模型目录不存在，请先运行: "
+            f"uv run audioclone-download-tts --backend qwen3-tts-base-mlx"
+            f"（{QWEN3_TTS_MODEL_IDS['base']}）"
+        )
+    return str(model_dir)
+
+
+@pytest.fixture(scope="session")
+def tts_instruct_dir() -> str:
+    """支持 instruct 模式的 CustomVoice 模型目录；未下载则跳过集成测试。"""
+    from audioclone.config import QWEN3_TTS_MODEL_DIR, QWEN3_TTS_MODEL_IDS
+
+    model_dir = QWEN3_TTS_MODEL_DIR / "qwen3_tts_custom_voice"
+    if not model_dir.exists():
+        pytest.skip(
+            f"CustomVoice 模型目录不存在，请先运行: "
+            f"uv run audioclone-download-tts --backend qwen3-tts-customvoice-mlx"
+            f"（{QWEN3_TTS_MODEL_IDS['custom_voice']}）"
+        )
+    return str(model_dir)
 
 
 @pytest.fixture(scope="session")

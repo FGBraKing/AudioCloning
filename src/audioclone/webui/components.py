@@ -12,6 +12,7 @@ from typing import Any
 from nicegui import ui
 
 from audioclone.core.capabilities import (
+    TTS_MODES,
     AudioClassificationCapability,
     AudioToAudioCapability,
     TextToAudioCapability,
@@ -63,6 +64,51 @@ def info_row(label: str, value: str, *, tone: str = "") -> None:
             ui.label(value).classes("text-[13px] font-medium text-right")
 
 
+def backends_supporting(mode: str) -> list[str]:
+    """列出支持指定推理模式的已登记 TTS 后端名（用于给出可切换的指引）。"""
+    from audioclone.config import TTS_BACKENDS
+    from audioclone.core.backends.registry import registry
+
+    names: list[str] = []
+    for name in TTS_BACKENDS:
+        factory = registry.get_factory(name)
+        if factory is not None and isinstance(factory, type):
+            if mode in getattr(factory, "supported_modes", ()):
+                names.append(name)
+    return names
+
+
+def mode_guard(mode: str, supported_modes: tuple[str, ...]) -> bool:
+    """按当前后端能力守卫一个合成面板：支持则静默，不支持则渲染说明条。
+
+    返回当前后端是否支持该模式；调用方据此决定是否禁用提交按钮，
+    让用户在点击前就明白「为什么不能用」，而不是点击后才收到报错。
+    """
+    if mode in supported_modes:
+        return True
+
+    with ui.row().classes("w-full items-start gap-2 p-3 rounded-2xl").style(
+        "background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35)"
+    ):
+        ui.icon("info").classes("text-[18px]").style("color: var(--ac-warning, #f59e0b)")
+        with ui.column().classes("gap-1"):
+            ui.label(f"当前 TTS 后端不支持「{MODE_LABELS.get(mode, mode)}」模式，本面板已停用").classes(
+                "text-[13px] font-semibold"
+            )
+            candidates = backends_supporting(mode)
+            hint = "可切换到: " + " / ".join(candidates) if candidates else "当前没有后端支持该模式"
+            ui.label(hint).classes("ac-hint")
+    return False
+
+
+def apply_mode_state(widget: BusyButton, supported: bool) -> None:
+    """按模式守卫结果同步提交按钮的可用态。"""
+    if supported:
+        return
+    widget.set_enabled(False)
+    widget.button.tooltip("当前 TTS 后端不支持该模式")
+
+
 # ─────────────────────────────────────────────────────────────
 # 系统状态（由 app.py 组装后传入）
 # ─────────────────────────────────────────────────────────────
@@ -103,7 +149,7 @@ def build_overview_panel(status: SystemStatus) -> Panel:
                 theme.eyebrow("AudioCloning · 音频模型体验工具箱")
                 ui.label("把文字变成你的声音").classes("text-3xl font-bold ac-gradient-text")
                 ui.label(
-                    "基于 Fun-CosyVoice3-0.5B (MLX) 与 Qwen3-ASR，支持零样本克隆、跨语言合成、"
+                    "基于 Qwen3-TTS (MLX) 与 Qwen3-ASR，支持零样本克隆、跨语言合成、"
                     "自然语言指令控制与语音识别，全部在本地 Apple Silicon 上完成。"
                 ).classes("ac-hint max-w-3xl")
                 with ui.row().classes("flex-wrap gap-2 mt-1"):
@@ -174,7 +220,8 @@ def build_overview_panel(status: SystemStatus) -> Panel:
 # ─────────────────────────────────────────────────────────────
 # 面板 2：声音克隆（零样本）
 # ─────────────────────────────────────────────────────────────
-def build_zero_shot_panel() -> Panel:
+def build_zero_shot_panel(supported_modes: tuple[str, ...] = TTS_MODES) -> Panel:
+    mode_ok = mode_guard("zero_shot", supported_modes)
     with ui.column().classes("w-full gap-5") as container:
         with theme.card(dense=True):
             with ui.column().classes("w-full gap-1"):
@@ -219,6 +266,7 @@ def build_zero_shot_panel() -> Panel:
                             .props("flat no-caps")
                             .classes("ac-btn-ghost")
                         )
+                        apply_mode_state(generate, mode_ok)
 
         result = AudioResult(title="合成结果")
 
@@ -242,7 +290,8 @@ def build_zero_shot_panel() -> Panel:
 # ─────────────────────────────────────────────────────────────
 # 面板 3：跨语言合成
 # ─────────────────────────────────────────────────────────────
-def build_cross_lingual_panel() -> Panel:
+def build_cross_lingual_panel(supported_modes: tuple[str, ...] = TTS_MODES) -> Panel:
+    mode_ok = mode_guard("cross_lingual", supported_modes)
     with ui.column().classes("w-full gap-5") as container:
         with theme.card(dense=True):
             with ui.column().classes("w-full gap-1"):
@@ -275,6 +324,7 @@ def build_cross_lingual_panel() -> Panel:
                         clear = ui.button("清空", icon="restart_alt").props("flat no-caps").classes(
                             "ac-btn-ghost"
                         )
+                        apply_mode_state(generate, mode_ok)
 
         result = AudioResult(title="合成结果")
 
@@ -297,7 +347,8 @@ def build_cross_lingual_panel() -> Panel:
 # ─────────────────────────────────────────────────────────────
 # 面板 4：自然语言控制
 # ─────────────────────────────────────────────────────────────
-def build_instruct_panel() -> Panel:
+def build_instruct_panel(supported_modes: tuple[str, ...] = TTS_MODES) -> Panel:
+    mode_ok = mode_guard("instruct", supported_modes)
     with ui.column().classes("w-full gap-5") as container:
         with theme.card(dense=True):
             with ui.column().classes("w-full gap-1"):
@@ -340,6 +391,7 @@ def build_instruct_panel() -> Panel:
                         clear = ui.button("清空", icon="restart_alt").props("flat no-caps").classes(
                             "ac-btn-ghost"
                         )
+                        apply_mode_state(generate, mode_ok)
 
         result = AudioResult(title="合成结果")
 

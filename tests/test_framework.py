@@ -332,7 +332,6 @@ def test_registry_list_backends_for():
     assert {
         "dummy-tts",
         "dummy-omni",
-        "cosyvoice3-mlx",
         "qwen3-tts-base-mlx",
         "qwen3-tts-customvoice-mlx",
         "qwen3-tts-voicedesign-mlx",

@@ -45,10 +45,10 @@ ARCH = "qwen3_tts"
 #: 依赖缺失时的修复指引（日志与异常共用）
 _HINT = (
     "当前 mlx_audio 未提供 Qwen3-TTS 架构（mlx_audio.tts.models.qwen3_tts）。\n"
-    "  - 需要 mlx-audio >= 0.3.0（该版本起提供 qwen3_tts 模块）；\n"
-    "  - 注意：mlx-audio-plus（CosyVoice 分支，基线 mlx-audio 0.2.9）不含该模块，"
-    "且上游 0.3.0+ 已移除 CosyVoice 实现，二者目前互斥；\n"
-    "  - 若需保留 CosyVoice3 默认后端，请等待 mlx-audio-plus 跟进上游后再启用本后端。"
+    "  - 本项目依赖上游 mlx-audio（mlx_audio.tts.models.qwen3_tts 自 0.3.0 起提供）；\n"
+    "  - 请检查是否误装了 mlx-audio-plus（CosyVoice 分支，基线 mlx-audio 0.2.9，不含该模块），\n"
+    "    若是请执行: uv remove mlx-audio-plus && uv add 'mlx-audio[tts]>=0.5.0'；\n"
+    "  - 或直接重装: uv sync --reinstall-package mlx-audio"
 )
 
 

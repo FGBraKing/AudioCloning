@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+### 变更（TTS 迁移：CosyVoice3 → Qwen3-TTS）
+- 依赖切换：`mlx-audio-plus>=0.1.7` → **上游 `mlx-audio[tts]>=0.5.0`**（`mlx-lm` 随之放宽至 `>=0.31.1`，
+  `transformers` 升至 5.x）。上游 mlx-audio 0.3.0 起移除 CosyVoice 实现，二者不可共存
+- **下线 `cosyvoice3-mlx` 后端**（上游已无 CosyVoice 实现，保留即死代码），默认 TTS 后端改为
+  `qwen3-tts-base-mlx`；`config.MODEL_ID/MODEL_DIR` 常量随之移除
+- 修复 `audioclone-download-tts/asr` 的目录错位：`--local_dir` 默认值原先不随 `--backend` 变化，
+  导致不同后端的同名权重文件互相覆盖（实测 Base 目录被 VoiceDesign 覆盖，加载时静默串模型）。
+  现在 `--local_dir` 缺省时**随 `--backend`** 求值
+- 修复 WebUI 合成模式与后端能力不匹配的问题：默认后端 `base` 不支持 `instruct`，
+  「自然语言控制」面板此前必然报错。现在面板会感知后端能力——不支持的模式
+  **渲染提示条并停用提交按钮**，并列出可切换的后端清单（`mode_guard` / `apply_mode_state`）
+- 修复 SOCKS 代理导致的启动崩溃：`ALL_PROXY=socks5://` 会让 httpx 在**创建客户端时**就抛
+  ImportError（与 no_proxy 无关），此前用 dummy ASR 不会触发、切到真实 ASR 后必然触发。
+  webui/api 入口现在会移除 `ALL_PROXY`/`all_proxy`
+
 ### 变更（WebUI 迁移：Gradio → NiceGUI）
 - 界面框架替换为 NiceGUI（`nicegui>=3.16`），移除 `gradio` 依赖；入口 `audioclone-webui` 不变
 - 新增 `webui/theme.py`（设计令牌与全局样式）、`webui/widgets.py`（复合控件）、

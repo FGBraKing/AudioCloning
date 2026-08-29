@@ -1,6 +1,6 @@
 # AudioCloning — 音频模型体验工具箱 (v0.2.6)
 
-一个**模型可替换**的本地音频体验工具。内置基于 **Fun-CosyVoice3-0.5B (MLX)** 的语音合成/克隆
+一个**模型可替换**的本地音频体验工具。内置基于 **Qwen3-TTS-1.7B (MLX)** 的语音合成/克隆
 与基于 **Qwen3-ASR** 的语音识别，运行于 Apple Silicon。功能框架（WebUI / REST API / 流程编排）与
 具体模型解耦，通过统一后端接口即可切换或接入新模型。
 
@@ -55,7 +55,6 @@ AudioCloning/
 │       │   │   └── vad.py       # VoiceActivityCapability
 │       │   ├── backends/     # 模型实现层（可替换、可插拔）
 │       │   │   ├── registry.py  # 后端注册表
-│       │   │   ├── cosyvoice_mlx.py  # CosyVoice3 (MLX) TTS 后端
 │       │   │   ├── qwen3_tts_mlx.py  # Qwen3-TTS (MLX) 三变体 TTS 后端
 │       │   │   ├── qwen3_asr_llama.py # Qwen3-ASR (llama.cpp) 后端
 │       │   │   └── dummy.py      # 伪模型后端（框架测试/快速演示）
@@ -140,8 +139,7 @@ uv run audioclone-api
 
 | 后端名 | 模型 | 支持的推理模式 |
 |--------|------|----------------|
-| `cosyvoice3-mlx`（默认） | `mlx-community/Fun-CosyVoice3-0.5B-2512-fp16` | 零样本克隆 / 跨语言 / 指令控制 |
-| `qwen3-tts-base-mlx` | `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit` | 零样本克隆 / 跨语言 |
+| `qwen3-tts-base-mlx`（默认） | `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit` | 零样本克隆 / 跨语言 |
 | `qwen3-tts-customvoice-mlx` | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit` | 指令控制（预设音色 + 情绪） |
 | `qwen3-tts-voicedesign-mlx` | `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit` | 指令控制（自然语言造音色） |
 | `dummy` / `dummy-omni` | 无（伪模型） | 全部 |
@@ -153,12 +151,17 @@ uv run audioclone-download-tts --backend qwen3-tts-base-mlx
 uv run audioclone-webui --tts-backend qwen3-tts-base-mlx
 ```
 
-> **依赖注意**：Qwen3-TTS 需要 `mlx_audio` 提供 `qwen3_tts` 架构（**mlx-audio ≥ 0.3.0**）。
-> 当前环境安装的 `mlx_audio` 实际来自 **mlx-audio-plus 0.1.8**（CosyVoice 分支，基线 mlx-audio 0.2.9），
-> 不含该模块；而上游 mlx-audio 0.3.0+ 已移除 CosyVoice 实现，因此**两者目前互斥**。
-> 在未升级依赖前选择上述三个后端，启动会给出明确的依赖指引错误（不会加载第二个模型）。
+> **依赖说明**：三个后端依赖 `mlx_audio` 的 `qwen3_tts` 架构（**mlx-audio ≥ 0.3.0**，
+> 本项目锁定 `mlx-audio[tts]>=0.5.0`）。上游 mlx-audio 0.3.0 起已移除 CosyVoice 实现，
+> 因此早期的 `cosyvoice3-mlx` 后端已随本迁移一并下线。
+>
+> **运行时模型约束**：为保证内存可控，进程内**同时只加载一个 TTS 模型与一个 ASR 模型**
+> （由核心层模型槽位守卫强制执行）。因此三个 Qwen3-TTS 变体需按需切换：
+> 克隆用 `base`，情绪/音色指令用 `customvoice` 或 `voicedesign`。
+> WebUI 会对当前后端不支持的模式**直接停用对应面板**并给出可切换的后端清单，
+> 而不是等你点击后才报错。
 
-> **注**: 项目已在 `config.py` 中默认设置 `no_proxy=localhost,127.0.0.1`，代理不再造成本地回环连接异常。当前默认后端为 `cosyvoice3-mlx` + `qwen3-asr-llama`，可通过环境变量 `AUDIOCLONE_TTS_BACKEND` / `AUDIOCLONE_ASR_BACKEND` 或 CLI 参数切换。
+> **注**: 项目已在 `config.py` 中默认设置 `no_proxy=localhost,127.0.0.1`，代理不再造成本地回环连接异常。当前默认后端为 `qwen3-tts-base-mlx` + `qwen3-asr-llama`，可通过环境变量 `AUDIOCLONE_TTS_BACKEND` / `AUDIOCLONE_ASR_BACKEND` 或 CLI 参数切换。
 
 ---
 
@@ -215,9 +218,12 @@ GET /api/health
 {
   "status": "ok",
   "framework": "MLX",
-  "model": "mlx-community/Fun-CosyVoice3-0.5B-2512-fp16",
+  "backend": "qwen3-tts-base-mlx",
+  "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+  "supported_modes": ["zero_shot", "cross_lingual"],
   "sample_rate": 24000,
-  "model_loaded": true
+  "model_loaded": true,
+  "model_slots": { "tts": "qwen3-tts-base-mlx", "asr": null }
 }
 ```
 
@@ -297,7 +303,9 @@ uv run pytest
 
 | 模型 | 用途 | 格式 | 来源 |
 |------|------|------|------|
-| Fun-CosyVoice3-0.5B-2512-fp16 | TTS 语音合成 | MLX (safetensors) | mlx-community / ModelScope |
+| Qwen3-TTS-12Hz-1.7B-Base-8bit | TTS 参考音频克隆 | MLX (safetensors, 8bit) | mlx-community / ModelScope |
+| Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit | TTS 预设音色 + 情绪指令 | MLX (safetensors, 8bit) | mlx-community / ModelScope |
+| Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit | TTS 自然语言造音色 | MLX (safetensors, 8bit) | mlx-community / ModelScope |
 | Qwen3-ASR-0.6B-GGUF | ASR 语音识别 | GGUF (Q8_0) | ggml-org / ModelScope |
 
 ---

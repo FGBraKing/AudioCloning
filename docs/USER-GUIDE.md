@@ -14,7 +14,7 @@
 
 一个**能力驱动、模型可替换**的本地音频模型体验工具箱（Apple Silicon + MLX）。
 框架提供 6 种音频任务能力：**TTS / Text-to-Audio / ASR / Audio-to-Audio / 音频分类 / VAD**，
-每种能力都有独立服务层（Service），按能力校验后端。内置真实后端（CosyVoice3-MLX、Qwen3-ASR-llama.cpp）
+每种能力都有独立服务层（Service），按能力校验后端。内置真实后端（Qwen3-TTS-MLX 三变体、Qwen3-ASR-llama.cpp）
 与全能力演示后端（dummy-omni）。
 
 ```
@@ -38,7 +38,7 @@ v0.2.3（本版文档）相比 v0.2.2 的修订（按 `QUALITY-REPORT.md` §9）
 - Python 3.13（由 uv 管理，`.python-version` 固定）
 - [uv](https://docs.astral.sh/uv/)
 - [llama.cpp](https://github.com/ggerganov/llama.cpp)（仅 ASR 需要；`brew install llama.cpp`）
-- 可选真实模型：CosyVoice3-MLX、Qwen3-ASR GGUF（下载见 §6）
+- 可选真实模型：Qwen3-TTS MLX（三变体）、Qwen3-ASR GGUF（下载见 §6）
 
 ---
 
@@ -64,7 +64,7 @@ brew install llama.cpp
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `AUDIOCLONE_TTS_BACKEND` | `cosyvoice3-mlx` | 默认 TTS 后端 |
+| `AUDIOCLONE_TTS_BACKEND` | `qwen3-tts-base-mlx` | 默认 TTS 后端 |
 | `AUDIOCLONE_ASR_BACKEND` | `qwen3-asr-llama` | 默认 ASR 后端 |
 | `AUDIOCLONE_SAMPLE_RATE` | `24000` | TTS 输出采样率 |
 | `AUDIOCLONE_REF_AUDIO_MAX_SEC` / `MIN_SEC` / `MIN_SR` | `30` / `1` / `8000` | 参考音频校验 |
@@ -101,7 +101,7 @@ TTS_BACKENDS["my-tts"] = {"model_id": "my-org/my-model"}
 
 | 任务 | 能力接口 | Service | 真实后端 | 演示后端 |
 |------|----------|---------|:---:|:---:|
-| Text-to-Speech | `TextToSpeechCapability` | `TTSService` | ✅ cosyvoice_mlx | dummy / dummy-omni |
+| Text-to-Speech | `TextToSpeechCapability` | `TTSService` | ✅ qwen3_tts_mlx（三变体） | dummy / dummy-omni |
 | Text-to-Audio | `TextToAudioCapability` | `TextToAudioService` | 待接入 | dummy-omni |
 | Speech-Recognition | `SpeechRecognitionCapability` | `ASRService` | ✅ qwen3_asr_llama | dummy-omni |
 | Audio-to-Audio | `AudioToAudioCapability` | `AudioToAudioService` | 待接入 | dummy-omni |
@@ -134,8 +134,7 @@ uv run audioclone-webui --tts-backend dummy-omni --asr-backend dummy-omni
 
 | 后端名 | 模型 | 支持模式 | 说明 |
 |--------|------|----------|------|
-| `cosyvoice3-mlx` | Fun-CosyVoice3-0.5B-2512-fp16 | 全部三种 | 默认后端 |
-| `qwen3-tts-base-mlx` | Qwen3-TTS-12Hz-1.7B-Base-8bit | zero_shot / cross_lingual | 参考音频克隆；给 `ref_text` 走 ICL，不给走 speaker-encoder |
+| `qwen3-tts-base-mlx` | Qwen3-TTS-12Hz-1.7B-Base-8bit | zero_shot / cross_lingual | **默认后端**；参考音频克隆；给 `ref_text` 走 ICL，不给走 speaker-encoder |
 | `qwen3-tts-customvoice-mlx` | Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit | instruct | 预设音色（默认 `Vivian`）+ 情绪/风格指令 |
 | `qwen3-tts-voicedesign-mlx` | Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit | instruct | 用自然语言描述音色，无需参考音频 |
 
@@ -144,13 +143,14 @@ uv run audioclone-download-tts --backend qwen3-tts-base-mlx
 uv run audioclone-webui --tts-backend qwen3-tts-base-mlx
 ```
 
-> **依赖要求**：Qwen3-TTS 需要 `mlx_audio` 提供 `qwen3_tts` 架构（mlx-audio ≥ 0.3.0）。
-> 当前 `mlx_audio` 由 mlx-audio-plus 0.1.8（CosyVoice 分支，基线 0.2.9）提供，不含该模块；
-> 上游 mlx-audio 0.3.0+ 虽含该模块但已移除 CosyVoice 实现，二者互斥。
-> 依赖未就绪时选择这三个后端会中止启动并打印修复指引，不会残留半加载状态。
+> **依赖**：三个后端依赖 `mlx_audio` 的 `qwen3_tts` 架构（本项目锁定 `mlx-audio[tts]>=0.5.0`）。
+> 依赖缺失时启动会中止并打印修复指引，不会残留半加载状态。
 >
-> **模式不匹配**：若当前后端不支持所选模式（如用 CustomVoice 跑「零样本克隆」），
-> 服务层会在编排前返回明确错误（WebUI 弹提示 / API 返回 400），不会进入模型推理。
+> **运行时只加载一个 TTS + 一个 ASR 模型**（核心层槽位守卫强制执行），因此三个变体按需切换：
+> 克隆用 `base`，情绪/音色指令用 `customvoice` 或 `voicedesign`。
+>
+> **模式不匹配**：当前后端不支持的模式，其对应面板会在 WebUI 中**直接停用**
+> （显示提示条 + 指引可切换的后端清单）；API 侧则在编排前返回 400，不会进入模型推理。
 
 ### 5.4 启动 REST API
 
@@ -194,9 +194,12 @@ GET /api/health
 {
   "status": "ok",
   "framework": "MLX",
-  "model": "mlx-community/Fun-CosyVoice3-0.5B-2512-fp16",
+  "backend": "qwen3-tts-base-mlx",
+  "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+  "supported_modes": ["zero_shot", "cross_lingual"],
   "sample_rate": 24000,
-  "model_loaded": true
+  "model_loaded": true,
+  "model_slots": { "tts": "qwen3-tts-base-mlx", "asr": null }
 }
 ```
 
@@ -261,7 +264,7 @@ GET /api/outputs?limit=50&include_duration=true
 ```python
 from audioclone.core import TTSService, create_tts_backend
 
-backend = create_tts_backend("cosyvoice3-mlx")   # 或 "dummy-omni"
+backend = create_tts_backend("qwen3-tts-base-mlx")   # 或 "dummy-omni"
 svc = TTSService(backend)                         # 构造即能力校验，不匹配抛 CapabilityError
 
 path = svc.synthesize_to_file(

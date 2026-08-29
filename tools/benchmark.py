@@ -3,7 +3,7 @@
 
 用法::
 
-    uv run python -m tools.benchmark --backend cosyvoice3-mlx --iterations 3
+    uv run python -m tools.benchmark --backend qwen3-tts-base-mlx --iterations 3
 
 无真实模型时可用 ``--backend dummy-omni`` 快速跑通框架链路。
 """

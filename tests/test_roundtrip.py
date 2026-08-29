@@ -1,6 +1,6 @@
 """TTS + ASR 回环交叉验证 (需要本地模型与 llama.cpp)。
 
-流程: Text → CosyVoice3 合成 → WAV → Qwen3-ASR 识别 → 文本比对 (LCS ≥ 80%)。
+流程: Text → Qwen3-TTS 合成 → WAV → Qwen3-ASR 识别 → 文本比对 (LCS ≥ 80%)。
 """
 
 from __future__ import annotations

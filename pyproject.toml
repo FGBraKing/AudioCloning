@@ -9,10 +9,13 @@ license = "MIT"
 authors = [
     { name = "AudioCloning" },
 ]
-keywords = ["mlx", "tts", "asr", "voice-cloning", "cosyvoice", "nicegui", "fastapi"]
+keywords = ["mlx", "tts", "asr", "voice-cloning", "qwen3-tts", "nicegui", "fastapi"]
 dependencies = [
-    "mlx-audio-plus>=0.1.7",
-    "mlx-lm>=0.18,<0.30",
+    # Qwen3-TTS 需要 mlx_audio 的 qwen3_tts 架构（上游 mlx-audio >= 0.3.0 起提供）。
+    # 注意：mlx-audio-plus（CosyVoice 分支，基线 0.2.9）不含该模块，且上游 0.3.0+
+    # 已移除 CosyVoice 实现 —— 二者不可共存，本项目选择上游 mlx-audio。
+    "mlx-audio[tts]>=0.5.0",
+    "mlx-lm>=0.31.1",
     "modelscope>=1.20.0",
     "nicegui>=3.16.0",
     "soundfile>=0.12.1",
@@ -40,6 +43,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.10",
     "httpx>=0.27.0",  # 已含于运行依赖，此处保留以显式声明
+    "httpx2>=2.12.0",
 ]
 
 [build-system]

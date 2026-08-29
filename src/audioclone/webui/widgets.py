@@ -234,6 +234,13 @@ class BusyButton:
         self.button.enable()
         self._spinner.set_visibility(False)
 
+    def set_enabled(self, enabled: bool) -> None:
+        """启用/禁用按钮（用于面板能力不匹配时阻止无效提交）。"""
+        if enabled:
+            self.button.enable()
+        else:
+            self.button.disable()
+
 
 async def run_guarded(button: BusyButton | None, work: Callable[[], Awaitable[Any]]) -> Any:
     """执行异步任务：忙碌态 + 统一异常提示。失败返回 ``None``。"""

@@ -76,30 +76,44 @@ def download_asr(local_dir: str | None = None, backend: str | None = None) -> No
 
 def _tts_default_dir(backend: str | None = None) -> Path:
     """从 TTS 后端配置取模型目录（默认取全局默认后端）。"""
-    from audioclone.config import MODEL_DIR
+    from audioclone.config import QWEN3_TTS_MODEL_DIR
 
     entry = TTS_BACKENDS.get(backend or TTS_BACKEND, {})
     model_dir = entry.get("model_dir")
-    return Path(model_dir) if isinstance(model_dir, str) else MODEL_DIR
+    return Path(model_dir) if isinstance(model_dir, str) else QWEN3_TTS_MODEL_DIR
 
 
-def _run_download(name: str, func, default_dir: Path) -> None:
+def _run_download(name: str, func, default_dir_for_backend) -> None:
+    """下载命令入口。
+
+    ``--local_dir`` 未显式指定时，目录必须**跟随 ``--backend``**：不同后端的模型
+    绝不能落到同一目录（否则同名权重文件互相覆盖，得到一个"混合体"模型）。
+    ``default_dir_for_backend`` 为 ``backend 名 -> 默认目录`` 的回调，在解析出
+    backend 之后才求值。
+    """
     parser = argparse.ArgumentParser(prog=name)
-    parser.add_argument("--local_dir", type=str, default=str(default_dir), help="本地保存目录")
+    parser.add_argument(
+        "--local_dir", type=str, default=None, help="本地保存目录（默认随 --backend 而定）"
+    )
     parser.add_argument(
         "--backend", type=str, default=None, help="后端名称（默认取当前配置的默认后端）"
     )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    func(args.local_dir, args.backend)
+    local_dir = args.local_dir or str(default_dir_for_backend(args.backend))
+    func(local_dir, args.backend)
 
 
 def download_tts_main() -> None:
     """``audioclone-download-tts`` 入口。"""
-    _run_download("audioclone-download-tts", download_tts, _tts_default_dir())
+    _run_download("audioclone-download-tts", download_tts, _tts_default_dir)
 
 
 def download_asr_main() -> None:
     """``audioclone-download-asr`` 入口。"""
-    _run_download("audioclone-download-asr", download_asr, ASR_MODEL_DIR)
+    _run_download(
+        "audioclone-download-asr",
+        download_asr,
+        lambda backend: ASR_MODEL_DIR,
+    )

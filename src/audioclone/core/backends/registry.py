@@ -77,7 +77,6 @@ registry = BackendRegistry()
 
 def _register_defaults() -> None:
     """预注册项目内置后端（注册表为工厂的唯一事实源）。"""
-    from audioclone.core.backends.cosyvoice_mlx import CosyVoiceMLXBackend
     from audioclone.core.backends.dummy import DummyASRBackend, DummyOmnibackend, DummyTTSBackend
     from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
     from audioclone.core.backends.qwen3_tts_mlx import (
@@ -86,7 +85,6 @@ def _register_defaults() -> None:
         Qwen3TTSVoiceDesignMLXBackend,
     )
 
-    registry.register("cosyvoice3-mlx", CosyVoiceMLXBackend)
     registry.register("qwen3-asr-llama", Qwen3AsrLlamaBackend)
     registry.register("qwen3-tts-base-mlx", Qwen3TTSBaseMLXBackend)
     registry.register("qwen3-tts-customvoice-mlx", Qwen3TTSCustomVoiceMLXBackend)

@@ -27,6 +27,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 # 本地回环不受系统代理影响（在 httpx 等网络库导入前设置）
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
+# 同 webui：SOCKS 代理会让 httpx 客户端创建阶段直接失败
+os.environ.pop("ALL_PROXY", None)
+os.environ.pop("all_proxy", None)
 
 from audioclone import __version__
 from audioclone.api.metrics import metrics
@@ -36,7 +39,6 @@ from audioclone.config import (
     MAX_INLINE_UPLOAD_BYTES,
     MAX_TEXT_LENGTH,
     MAX_UPLOAD_BYTES,
-    MODEL_ID,
     OUTPUT_DIR,
 )
 from audioclone.core import TTSService, create_tts_backend, model_slots
@@ -64,7 +66,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动创建并加载 TTS 后端，退出统一释放。"""
     logger.info("正在加载 TTS 服务（后端由配置决定）...")
     opts: dict = {}
-    model_dir = os.environ.get("COSYVOICE_MODEL_DIR", None)
+    model_dir = os.environ.get("AUDIOCLONE_TTS_MODEL_DIR", None)
     if model_dir:
         opts["model_dir"] = model_dir
     backend = create_tts_backend(**opts)
@@ -158,10 +160,13 @@ async def _json_error(status: int, detail: str):
 async def health(request: Request) -> dict[str, Any]:
     """健康检查。"""
     engine = getattr(request.app.state, "engine", None)
+    backend = getattr(request.app.state, "backend", None)
     return {
         "status": "ok",
         "framework": "MLX",
-        "model": MODEL_ID,
+        "backend": getattr(backend, "name", None),
+        "model": getattr(backend, "model_id", None),
+        "supported_modes": list(getattr(backend, "supported_modes", []) or []),
         "sample_rate": engine.sample_rate if engine else None,
         "model_loaded": engine is not None,
         # 槽位占用情况：保证运行时每种任务只有一个已加载模型

@@ -18,8 +18,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # 模型配置（MLX 格式）
-MODEL_ID = "mlx-community/Fun-CosyVoice3-0.5B-2512-fp16"
-MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Fun-CosyVoice3-0.5B-2512-fp16"
 ASR_MODEL_ID = "ggml-org/Qwen3-ASR-0.6B-GGUF"
 ASR_MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Qwen3-ASR-0.6B-GGUF"
 
@@ -60,11 +58,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AUDIOCLONE_", env_file=".env", extra="ignore")
 
     # ── 默认后端 ───────────────────────────────────────────
-    tts_backend: str = "cosyvoice3-mlx"
+    tts_backend: str = "qwen3-tts-base-mlx"
     asr_backend: str = "qwen3-asr-llama"
 
     # ── 音频（TTS 输出 / 参考音频校验） ─────────────────────
-    sample_rate: int = 24000               # CosyVoice3 输出采样率
+    sample_rate: int = 24000               # TTS 输出采样率
     ref_audio_max_sec: int = 30            # 参考音频最大时长(秒)
     ref_audio_min_sec: int = 1             # 参考音频最小时长(秒)
     ref_audio_min_sr: int = 8000           # 参考音频最低采样率(Hz)
@@ -146,10 +144,6 @@ ALLOWED_UPLOAD_EXT = ASR_SUPPORTED_FORMATS
 # ─── 后端默认选择与覆盖参数（工厂唯一来源 = registry） ──────
 # 每个键为后端名称（与 config 暴露的 CLI/env 名一致），值为构造覆盖参数。
 TTS_BACKENDS: dict[str, dict[str, Any]] = {
-    "cosyvoice3-mlx": {
-        "model_id": MODEL_ID,
-        "model_dir": str(MODEL_DIR),
-    },
     "dummy": {
         "sample_rate": settings.sample_rate,
     },

@@ -16,6 +16,10 @@ from typing import Any, cast
 # 本地回环不受系统代理影响（在 httpx 等网络库导入前设置）
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
+# ALL_PROXY=socks5:// 会让 httpx 在创建客户端时就抛 ImportError（缺 socksio），
+# 与目标主机是否命中 no_proxy 无关 —— 必须在建立任何 httpx 客户端前移除。
+os.environ.pop("ALL_PROXY", None)
+os.environ.pop("all_proxy", None)
 
 from nicegui import app, ui  # noqa: E402
 
@@ -23,7 +27,6 @@ from audioclone import __version__  # noqa: E402
 from audioclone.config import (  # noqa: E402
     ASR_SERVER_PORT,
     LOG_JSON,
-    MODEL_ID,
     WEBUI_CONCURRENCY,
     WEBUI_HOST,
     WEBUI_PORT,
@@ -75,8 +78,8 @@ async def _infer(fn: Any, *args: Any) -> Any:
 
 
 def _tts_model_label(backend: ModelBackend) -> str:
-    """展示用的 TTS 模型标识：后端自带则用之，否则回落到配置模型。"""
-    return str(getattr(backend, "model_id", "") or MODEL_ID)
+    """展示用的 TTS 模型标识（取后端自带的 model_id）。"""
+    return str(getattr(backend, "model_id", "") or "(未指定)")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -147,9 +150,9 @@ def _build_index() -> None:
             with ui.column().classes("flex-1 min-w-0"):
                 panels = [
                     build_overview_panel(status),
-                    build_zero_shot_panel(),
-                    build_cross_lingual_panel(),
-                    build_instruct_panel(),
+                    build_zero_shot_panel(status.tts_modes),
+                    build_cross_lingual_panel(status.tts_modes),
+                    build_instruct_panel(status.tts_modes),
                     build_asr_panel(),
                     build_multitask_panel(backend),
                     build_guide_panel(),
@@ -386,7 +389,7 @@ def main() -> None:
     tts_backend: ModelBackend | None = None
     asr_backend: ModelBackend | None = None
     try:
-        # 加载 TTS 服务（后端经 model_loader 创建，默认 cosyvoice3-mlx）
+        # 加载 TTS 服务（后端经 model_loader 创建，默认 qwen3-tts-base-mlx）
         tts_opts: dict = {}
         if args.tts_backend is not None:
             tts_opts["name"] = args.tts_backend
