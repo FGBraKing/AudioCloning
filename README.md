@@ -18,7 +18,7 @@
 | Audio-to-Audio | 变声 / 音色转换 / 音质增强 |
 | Audio Classification | 语音/音乐/环境声等分类 |
 | Voice Activity Detection | 说话片段检测 (VAD) |
-| WebUI | Gradio 交互界面，支持上传/录音 |
+| WebUI | NiceGUI 交互界面，支持上传/录音，深浅色与响应式布局 |
 | REST API | FastAPI 程序化接口，便于集成 |
 | dummy 后端 | 内置伪模型，无需 GPU 即可完整体验框架链路 |
 
@@ -56,6 +56,7 @@ AudioCloning/
 │       │   ├── backends/     # 模型实现层（可替换、可插拔）
 │       │   │   ├── registry.py  # 后端注册表
 │       │   │   ├── cosyvoice_mlx.py  # CosyVoice3 (MLX) TTS 后端
+│       │   │   ├── qwen3_tts_mlx.py  # Qwen3-TTS (MLX) 三变体 TTS 后端
 │       │   │   ├── qwen3_asr_llama.py # Qwen3-ASR (llama.cpp) 后端
 │       │   │   └── dummy.py      # 伪模型后端（框架测试/快速演示）
 │       │   ├── service/      # 服务编排层（按能力消费，与模型解耦）
@@ -66,11 +67,16 @@ AudioCloning/
 │       │   │   ├── audio_classification_service.py # AudioClassificationService
 │       │   │   ├── vad_service.py      # VoiceActivityService
 │       │   │   └── model_loader.py     # 按配置创建后端 + 能力查询
+│       │   ├── model_slot.py # 模型槽位守卫（运行时一个 TTS + 一个 ASR）
 │       │   └── text.py       # 长文本分段、归一化
-│       ├── webui/            # Gradio 界面（仅依赖服务层）
-│       │   ├── app.py        # 入口 (audioclone-webui)
-│       │   ├── components.py # 界面布局
-│       │   └── handlers.py   # 事件处理
+│       ├── webui/            # NiceGUI 界面（仅依赖服务层）
+│       │   ├── app.py        # 入口 (audioclone-webui) + 路由装配
+│       │   ├── components.py # 面板布局
+│       │   ├── widgets.py    # 复合控件（音频输入/结果展示/忙态按钮）
+│       │   ├── theme.py      # 设计令牌与全局样式
+│       │   ├── media.py      # 上传与结果落盘
+│       │   ├── errors.py     # 界面错误类型
+│       │   └── handlers.py   # 事件处理（框架无关）
 │       ├── api/              # FastAPI
 │       │   └── server.py     # 入口 (audioclone-api)
 │       ├── cli/              # 命令工具
@@ -123,9 +129,34 @@ uv run audioclone-webui --no_asr
 # 切换后端（无需真实模型即可完整体验框架链路）
 uv run audioclone-webui --tts-backend dummy --asr-backend dummy
 
+# 其他可选参数：--model_dir / --asr_model_dir / --theme dark|light / --no-browser
+uv run audioclone-webui --theme light --port 7870
+
 # 启动 REST API (默认 http://localhost:8000)
 uv run audioclone-api
 ```
+
+### TTS 后端一览
+
+| 后端名 | 模型 | 支持的推理模式 |
+|--------|------|----------------|
+| `cosyvoice3-mlx`（默认） | `mlx-community/Fun-CosyVoice3-0.5B-2512-fp16` | 零样本克隆 / 跨语言 / 指令控制 |
+| `qwen3-tts-base-mlx` | `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit` | 零样本克隆 / 跨语言 |
+| `qwen3-tts-customvoice-mlx` | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit` | 指令控制（预设音色 + 情绪） |
+| `qwen3-tts-voicedesign-mlx` | `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit` | 指令控制（自然语言造音色） |
+| `dummy` / `dummy-omni` | 无（伪模型） | 全部 |
+
+切换示例（下载对应模型后再启动）：
+
+```bash
+uv run audioclone-download-tts --backend qwen3-tts-base-mlx
+uv run audioclone-webui --tts-backend qwen3-tts-base-mlx
+```
+
+> **依赖注意**：Qwen3-TTS 需要 `mlx_audio` 提供 `qwen3_tts` 架构（**mlx-audio ≥ 0.3.0**）。
+> 当前环境安装的 `mlx_audio` 实际来自 **mlx-audio-plus 0.1.8**（CosyVoice 分支，基线 mlx-audio 0.2.9），
+> 不含该模块；而上游 mlx-audio 0.3.0+ 已移除 CosyVoice 实现，因此**两者目前互斥**。
+> 在未升级依赖前选择上述三个后端，启动会给出明确的依赖指引错误（不会加载第二个模型）。
 
 > **注**: 项目已在 `config.py` 中默认设置 `no_proxy=localhost,127.0.0.1`，代理不再造成本地回环连接异常。当前默认后端为 `cosyvoice3-mlx` + `qwen3-asr-llama`，可通过环境变量 `AUDIOCLONE_TTS_BACKEND` / `AUDIOCLONE_ASR_BACKEND` 或 CLI 参数切换。
 
@@ -220,7 +251,9 @@ Content-Type: multipart/form-data
 | `MAX_TEXT_LENGTH` | 300 | 单次合成最大字符数 |
 | `REF_AUDIO_MIN_SEC` | 1 | 参考音频最短时长 |
 | `REF_AUDIO_MAX_SEC` | 30 | 参考音频最长时长 |
-| `GRADIO_PORT` | 7860 | WebUI 端口 |
+| `WEBUI_PORT` | 7860 | WebUI 端口 |
+| `WEBUI_HOST` | 127.0.0.1 | WebUI 监听地址 |
+| `WEBUI_CONCURRENCY` | 2 | WebUI 推理并发上限 |
 | `ASR_SERVER_PORT` | 8090 | llama-server 端口 |
 | `ASR_CTX_SIZE` | 4096 | ASR 上下文窗口 |
 | `ASR_AUDIO_MAX_SEC` | 300 | ASR 最大音频时长 |

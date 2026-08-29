@@ -10,6 +10,7 @@ import numpy as np
 
 from audioclone.config import MODEL_DIR, MODEL_ID, SAMPLE_RATE
 from audioclone.core.capabilities import ModelBackend, TextToSpeechCapability
+from audioclone.core.model_slot import ModelSlot
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
 
     name = "cosyvoice3-mlx"
     capabilities = (TextToSpeechCapability,)
+    slot = ModelSlot.TTS
 
     def __init__(self, model_id: str | None = None, model_dir: str | Path | None = None) -> None:
         self.model_id = model_id or MODEL_ID
@@ -26,8 +28,8 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
         self._model: Any = None
         self.sample_rate: int = SAMPLE_RATE  # 未加载时默认，加载后以模型报告为准
 
-    # ─── 生命周期 ────────────────────────────────────────────
-    def load(self) -> None:
+    # ─── 生命周期（具体动作由基类模板方法 load()/close() 驱动） ──
+    def _load(self) -> None:
         if self._model is not None:
             return
         from mlx_audio.tts.utils import load_model as mlx_load_model
@@ -37,7 +39,7 @@ class CosyVoiceMLXBackend(ModelBackend, TextToSpeechCapability):
         self.sample_rate = int(getattr(self._model, "sample_rate", SAMPLE_RATE))
         logger.info("[TTS] CosyVoice3 MLX 加载完成，采样率: %s", self.sample_rate)
 
-    def close(self) -> None:
+    def _close(self) -> None:
         self._model = None
 
     # ─── 合成 ────────────────────────────────────────────────

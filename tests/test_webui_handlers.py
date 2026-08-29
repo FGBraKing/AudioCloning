@@ -1,4 +1,4 @@
-"""WebUI handler 单测 — 直接调用 handler（无 Gradio 运行时），覆盖成功与错误路径。"""
+"""WebUI handler 单测 — 直接调用 handler（无界面运行时），覆盖成功与错误路径。"""
 
 from __future__ import annotations
 
@@ -9,13 +9,14 @@ import soundfile as sf
 from audioclone.core import ASRService, TTSService
 from audioclone.core.backends.dummy import DummyASRBackend, DummyOmnibackend, DummyTTSBackend
 from audioclone.core.exceptions import AudioError
+from audioclone.webui.errors import UIError
 from audioclone.webui.handlers import (
-    gradio_error,
     make_asr_handler,
     make_cross_lingual_handler,
     make_instruct_handler,
     make_multitask_handlers,
     make_zero_shot_handler,
+    ui_error,
 )
 
 
@@ -25,27 +26,23 @@ def _make_wav(path, sr: int = 16000, seconds: float = 1.0) -> str:
     return str(path)
 
 
-# ─── @gradio_error 装饰器 ───────────────────────────────────
-def test_gradio_error_passthrough_gr_error():
-    import gradio as gr
-
-    @gradio_error("t", "m")
+# ─── @ui_error 装饰器 ────────────────────────────────────────
+def test_ui_error_passthrough():
+    @ui_error("t", "m")
     def fn():
-        raise gr.Error("原始消息")
+        raise UIError("原始消息")
 
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         fn()
     assert "原始消息" in str(ei.value)
 
 
-def test_gradio_error_wraps_domain_error():
-    import gradio as gr
-
-    @gradio_error("t", "合成失败")
+def test_ui_error_wraps_domain_error():
+    @ui_error("t", "合成失败")
     def fn():
         raise AudioError("领域错误消息")
 
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         fn()
     # 领域异常语义化消息原样展示（无 "合成失败:" 前缀）
     msg = str(ei.value)
@@ -53,14 +50,12 @@ def test_gradio_error_wraps_domain_error():
     assert "合成失败" not in msg
 
 
-def test_gradio_error_wraps_generic_error():
-    import gradio as gr
-
-    @gradio_error("t", "合成失败")
+def test_ui_error_wraps_generic_error():
+    @ui_error("t", "合成失败")
     def fn():
         raise RuntimeError("boom")
 
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         fn()
     assert "合成失败: boom" in str(ei.value)
 
@@ -76,33 +71,27 @@ def test_zero_shot_handler_success(tmp_path):
 
 
 def test_zero_shot_handler_missing_audio(tmp_path):
-    import gradio as gr
-
     engine = TTSService(DummyTTSBackend(sample_rate=24000))
     handler = make_zero_shot_handler(engine)
-    with pytest.raises(gr.Error):
+    with pytest.raises(UIError):
         handler("你好", None, None, "", 1.0)
 
 
 def test_zero_shot_handler_empty_text(tmp_path):
-    import gradio as gr
-
     engine = TTSService(DummyTTSBackend(sample_rate=24000))
     ref = _make_wav(tmp_path / "ref.wav")
     handler = make_zero_shot_handler(engine)
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         handler("   ", ref, None, "", 1.0)
     assert "文本为空" in str(ei.value)
 
 
 def test_zero_shot_handler_invalid_audio(tmp_path):
-    import gradio as gr
-
     engine = TTSService(DummyTTSBackend(sample_rate=24000))
     bad = tmp_path / "bad.wav"
     bad.write_bytes(b"not audio")
     handler = make_zero_shot_handler(engine)
-    with pytest.raises(gr.Error):
+    with pytest.raises(UIError):
         handler("你好", str(bad), None, "", 1.0)
 
 
@@ -124,12 +113,10 @@ def test_instruct_handler_success(tmp_path):
 
 
 def test_instruct_handler_missing_instruct(tmp_path):
-    import gradio as gr
-
     engine = TTSService(DummyTTSBackend(sample_rate=24000))
     ref = _make_wav(tmp_path / "ref.wav")
     handler = make_instruct_handler(engine)
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         handler("你好", ref, "  ", 1.0)
     assert "指令" in str(ei.value)
 
@@ -145,13 +132,11 @@ def test_asr_handler_success(tmp_path):
 
 
 def test_asr_handler_bad_format(tmp_path):
-    import gradio as gr
-
     asr_engine = ASRService(DummyASRBackend())
     bad = tmp_path / "in.mp4"
     bad.write_bytes(b"x")
     handler = make_asr_handler(asr_engine)
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         handler(str(bad), None)
     assert "不支持的音频格式" in str(ei.value)
 
@@ -175,13 +160,11 @@ def test_multitask_omnibackend_all(tmp_path):
 
 
 def test_multitask_guard_incapable_backend():
-    import gradio as gr
-
     handlers = make_multitask_handlers(DummyTTSBackend(sample_rate=24000))  # 仅 TTS
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         handlers["t2a"]("雷雨声", 0.2)
     assert "不支持" in str(ei.value)
-    with pytest.raises(gr.Error) as ei:
+    with pytest.raises(UIError) as ei:
         handlers["classify"]("whatever.wav")
     assert "不支持" in str(ei.value)
 

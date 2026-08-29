@@ -1,286 +1,593 @@
-"""Gradio WebUI 组件定义。"""
+"""NiceGUI 面板布局 — 总览 / 三个合成面板 / ASR / 多任务实验台 / 使用指南。
+
+本模块只负责「视图」：创建控件并组织排版，对外暴露控件字典供 ``app.py`` 绑定事件，
+业务逻辑一律位于 ``handlers.py``，两侧通过控件 key 解耦。
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
-import gradio as gr
+from nicegui import ui
 
-from audioclone.config import MAX_TEXT_LENGTH
-
-# 各 Tab 暴露给外层绑定的组件 key（Gradio 组件类型不统一，用 Any 便于事件绑定）
-ComponentGroup = dict[str, Any]
-
-
-def _char_count_html(text: str) -> str:
-    count = len(text) if text else 0
-    color = "red" if count > MAX_TEXT_LENGTH else "black"
-    return f"字符数: <span style='color:{color}'>{count}</span> / {MAX_TEXT_LENGTH}"
-
-
-def build_zero_shot_tab() -> ComponentGroup:
-    """构建 Tab1: 声音克隆 (零样本)。"""
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### 参考音频")
-            prompt_wav_upload = gr.Audio(
-                sources=["upload"],
-                type="filepath",
-                label="上传参考音频 (wav/mp3/flac, 1~30秒)",
-            )
-            prompt_wav_record = gr.Audio(
-                sources=["microphone"],
-                type="filepath",
-                label="或录制参考音频",
-            )
-            prompt_text = gr.Textbox(
-                label="参考文本 (可选，提升克隆精度)",
-                lines=1,
-                placeholder="请输入参考音频对应的文字内容...",
-                value="",
-            )
-
-        with gr.Column(scale=2):
-            gr.Markdown("### 合成文本")
-            tts_text = gr.Textbox(
-                label="输入合成文本",
-                lines=3,
-                placeholder=f"请输入需要合成的文本 (最大 {MAX_TEXT_LENGTH} 字)...",
-                value="你好，欢迎使用个人声音克隆系统，我是由AI生成的语音助手。",
-            )
-            char_count = gr.Markdown(_char_count_html(""))
-
-            with gr.Row():
-                speed = gr.Number(value=1.0, label="语速", minimum=0.5, maximum=2.0, step=0.1)
-
-            with gr.Row():
-                generate_btn = gr.Button("开始合成", variant="primary", scale=2)
-                clear_btn = gr.Button("清空", scale=1)
-
-    with gr.Row():
-        with gr.Column():
-            gr.Markdown("### 合成结果")
-            audio_output = gr.Audio(label="合成音频", autoplay=True)
-
-    tts_text.change(fn=_char_count_html, inputs=[tts_text], outputs=[char_count])
-
-    return {
-        "tts_text": tts_text,
-        "prompt_wav_upload": prompt_wav_upload,
-        "prompt_wav_record": prompt_wav_record,
-        "prompt_text": prompt_text,
-        "speed": speed,
-        "generate_btn": generate_btn,
-        "clear_btn": clear_btn,
-        "audio_output": audio_output,
-    }
+from audioclone.core.capabilities import (
+    AudioClassificationCapability,
+    AudioToAudioCapability,
+    TextToAudioCapability,
+    VoiceActivityCapability,
+)
+from audioclone.webui import theme
+from audioclone.webui.widgets import (
+    AudioInput,
+    AudioResult,
+    BusyButton,
+    CharCounterTextarea,
+    SpeedControl,
+    TextResult,
+)
 
 
-def build_cross_lingual_tab() -> ComponentGroup:
-    """构建 Tab2: 跨语言合成。"""
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### 参考音频")
-            cl_prompt_wav = gr.Audio(
-                sources=["upload"],
-                type="filepath",
-                label="上传参考音频 (源语言音色)",
-            )
+# ─────────────────────────────────────────────────────────────
+# 面板容器
+# ─────────────────────────────────────────────────────────────
+@dataclass
+class Panel:
+    """一个导航面板：``container`` 为根容器（切换可见性），``widgets`` 暴露内部控件。"""
 
-        with gr.Column(scale=2):
-            gr.Markdown("### 合成文本 (目标语言)")
-            cl_tts_text = gr.Textbox(
-                label="输入合成文本 (使用目标语言书写)",
-                lines=3,
-                placeholder="Enter the text in target language...",
-                value="Hello, this is a cross-lingual voice cloning demonstration.",
-            )
+    key: str
+    title: str
+    icon: str
+    container: ui.column
+    widgets: dict[str, Any] = field(default_factory=dict)
 
-            with gr.Row():
-                cl_speed = gr.Number(value=1.0, label="语速", minimum=0.5, maximum=2.0, step=0.1)
+    def __getitem__(self, key: str) -> Any:
+        return self.widgets[key]
 
-            with gr.Row():
-                cl_generate_btn = gr.Button("开始合成", variant="primary", scale=2)
-                cl_clear_btn = gr.Button("清空", scale=1)
-
-    with gr.Row():
-        with gr.Column():
-            gr.Markdown("### 合成结果")
-            cl_audio_output = gr.Audio(label="合成音频", autoplay=True)
-
-    return {
-        "tts_text": cl_tts_text,
-        "prompt_wav": cl_prompt_wav,
-        "speed": cl_speed,
-        "generate_btn": cl_generate_btn,
-        "clear_btn": cl_clear_btn,
-        "audio_output": cl_audio_output,
-    }
+    def set_visibility(self, visible: bool) -> None:
+        self.container.set_visibility(visible)
 
 
-def build_instruct_tab() -> ComponentGroup:
-    """构建 Tab3: 自然语言控制。"""
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### 参考音频")
-            inst_prompt_wav = gr.Audio(
-                sources=["upload"],
-                type="filepath",
-                label="上传参考音频 (音色来源)",
-            )
-            inst_instruct = gr.Textbox(
-                label="自然语言指令",
-                lines=2,
-                placeholder="例如: 请用开心的语气说 / 请用广东话表达 / 请尽可能快地说",
-                value="请用开心的语气说",
-            )
-
-        with gr.Column(scale=2):
-            gr.Markdown("### 合成文本")
-            inst_tts_text = gr.Textbox(
-                label="输入合成文本",
-                lines=3,
-                placeholder="请输入需要合成的文本...",
-                value="今天天气真好，适合出去走走，感受一下阳光和微风。",
-            )
-
-            with gr.Row():
-                inst_speed = gr.Number(value=1.0, label="语速", minimum=0.5, maximum=2.0, step=0.1)
-
-            with gr.Row():
-                inst_generate_btn = gr.Button("开始合成", variant="primary", scale=2)
-                inst_clear_btn = gr.Button("清空", scale=1)
-
-    with gr.Row():
-        with gr.Column():
-            gr.Markdown("### 合成结果")
-            inst_audio_output = gr.Audio(label="合成音频", autoplay=True)
-
-    return {
-        "tts_text": inst_tts_text,
-        "prompt_wav": inst_prompt_wav,
-        "instruct_text": inst_instruct,
-        "speed": inst_speed,
-        "generate_btn": inst_generate_btn,
-        "clear_btn": inst_clear_btn,
-        "audio_output": inst_audio_output,
-    }
+def grid(classes: str) -> ui.element:
+    """响应式栅格容器（Tailwind 断点控制列数）。"""
+    return ui.element("div").classes(f"grid w-full gap-4 {classes}")
 
 
-def build_system_status_panel() -> ComponentGroup:
-    """构建系统状态面板。"""
-    with gr.Accordion("⚙️ 系统状态", open=True):
-        with gr.Row():
-            tts_status = gr.Markdown("🔄 TTS 模型: 加载中...")
-            asr_status = gr.Markdown("🔄 ASR 服务: 检测中...")
-        with gr.Row():
-            device_info = gr.Markdown("框架: 检测中...")
-            server_info = gr.Markdown("服务: 初始化...")
-
-    return {
-        "tts_status": tts_status,
-        "asr_status": asr_status,
-        "device_info": device_info,
-        "server_info": server_info,
-    }
+def info_row(label: str, value: str, *, tone: str = "") -> None:
+    """「键 — 值」信息行。"""
+    with ui.row().classes("w-full items-center justify-between gap-4 py-1"):
+        ui.label(label).classes("text-[13px] shrink-0").style("color: var(--ac-text-muted)")
+        if tone:
+            theme.chip(value, tone=tone)
+        else:
+            ui.label(value).classes("text-[13px] font-medium text-right")
 
 
-def build_asr_tab() -> ComponentGroup:
-    """构建 Tab4: 语音识别 (ASR)。"""
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### 音频输入")
-            asr_audio_upload = gr.Audio(
-                sources=["upload"],
-                type="filepath",
-                label="上传音频文件 (wav/mp3/flac/ogg/m4a)",
-            )
-            asr_audio_record = gr.Audio(
-                sources=["microphone"],
-                type="filepath",
-                label="或录制音频",
-            )
+# ─────────────────────────────────────────────────────────────
+# 系统状态（由 app.py 组装后传入）
+# ─────────────────────────────────────────────────────────────
+@dataclass
+class SystemStatus:
+    """构建界面所需的系统快照。"""
 
-        with gr.Column(scale=2):
-            gr.Markdown("### 识别结果")
-            asr_text_output = gr.Textbox(
-                label="识别文本",
-                lines=6,
-                placeholder="点击“开始识别”后显示结果...",
-                value="",
-            )
-            asr_info = gr.Markdown("")
-
-            with gr.Row():
-                asr_generate_btn = gr.Button("开始识别", variant="primary", scale=2)
-                asr_clear_btn = gr.Button("清空", scale=1)
-
-    return {
-        "audio_upload": asr_audio_upload,
-        "audio_record": asr_audio_record,
-        "text_output": asr_text_output,
-        "info": asr_info,
-        "generate_btn": asr_generate_btn,
-        "clear_btn": asr_clear_btn,
-    }
+    version: str
+    tts_backend: str
+    tts_model: str
+    tts_ready: bool
+    tts_modes: tuple[str, ...]
+    asr_backend: str
+    asr_ready: bool
+    sample_rate: int
+    load_sec: float | None
+    webui_url: str
+    api_url: str
+    capabilities: tuple[str, ...]
 
 
-def build_multitask_tab() -> ComponentGroup:
-    """构建 Tab5: 多任务实验台（T2A / A2A / 音频分类 / VAD）。
+#: 推理模式 → 中文展示名（部分后端只支持子集，如 Qwen3-TTS CustomVoice 仅 instruct）
+MODE_LABELS: dict[str, str] = {
+    "zero_shot": "零样本克隆",
+    "cross_lingual": "跨语言",
+    "instruct": "指令控制",
+}
 
-    各子任务是否可用取决于当前后端是否具备对应能力；
-    使用 ``dummy-omni`` 全能力后端可完整体验。
-    """
-    gr.Markdown(
-        "### 🧪 多任务实验台\n"
-        "以下任务按后端能力动态可用；使用 `dummy-omni` 全能力后端可全部体验，"
-        "否则将提示“当前后端不支持该能力”。"
+
+# ─────────────────────────────────────────────────────────────
+# 面板 1：总览 / 系统状态
+# ─────────────────────────────────────────────────────────────
+def build_overview_panel(status: SystemStatus) -> Panel:
+    with ui.column().classes("w-full gap-5") as container:
+        # Hero
+        with theme.card():
+            with ui.column().classes("w-full gap-2"):
+                theme.eyebrow("AudioCloning · 音频模型体验工具箱")
+                ui.label("把文字变成你的声音").classes("text-3xl font-bold ac-gradient-text")
+                ui.label(
+                    "基于 Fun-CosyVoice3-0.5B (MLX) 与 Qwen3-ASR，支持零样本克隆、跨语言合成、"
+                    "自然语言指令控制与语音识别，全部在本地 Apple Silicon 上完成。"
+                ).classes("ac-hint max-w-3xl")
+                with ui.row().classes("flex-wrap gap-2 mt-1"):
+                    theme.chip(f"v{status.version}", tone="accent")
+                    theme.chip(f"后端 {status.tts_backend}")
+                    theme.chip(f"Apple MLX · {status.sample_rate}Hz")
+
+        with grid("grid-cols-1 xl:grid-cols-2"):
+            # 系统状态
+            with theme.card():
+                with theme.section("系统状态", icon="monitor_heart"):
+                    info_row(
+                        "TTS 模型",
+                        f"{status.tts_model}",
+                    )
+                    info_row(
+                        "TTS 状态",
+                        "已加载" if status.tts_ready else "未就绪",
+                        tone="ok" if status.tts_ready else "err",
+                    )
+                    info_row(
+                        "支持模式",
+                        "、".join(MODE_LABELS.get(m, m) for m in status.tts_modes) or "（无）",
+                    )
+                    info_row(
+                        "ASR 服务",
+                        f"{status.asr_backend} · {'运行中' if status.asr_ready else '未就绪'}",
+                        tone="ok" if status.asr_ready else "warn",
+                    )
+                    info_row("推理框架", f"Apple MLX · Metal GPU · {status.sample_rate}Hz")
+                    if status.load_sec is not None:
+                        info_row("模型加载耗时", f"{status.load_sec:.1f}s")
+                    theme.divider()
+                    with ui.row().classes("flex-wrap gap-2"):
+                        theme.chip(f"WebUI {status.webui_url}", tone="accent")
+                        theme.chip(f"API {status.api_url}")
+
+            # 后端能力
+            with theme.card():
+                with theme.section("当前后端能力", icon="tune"):
+                    ui.label(
+                        "同一后端可聚合多种能力；不支持的任务会在执行时给出明确提示。"
+                    ).classes("ac-hint")
+                    with ui.row().classes("flex-wrap gap-2"):
+                        for name in status.capabilities:
+                            theme.chip(name, tone="ok")
+
+        # 快速上手
+        with theme.card():
+            with theme.section("快速上手", icon="rocket_launch"):
+                steps = [
+                    ("1", "准备参考音频", "3~10 秒清晰人声，wav / mp3 / flac 均可"),
+                    ("2", "填写合成文本", "单次最多 300 字符，长文本自动分段拼接"),
+                    ("3", "开始合成", "等待进度结束后即可试听与下载"),
+                ]
+                with grid("grid-cols-1 md:grid-cols-3"):
+                    for no, title, desc in steps:
+                        with ui.column().classes("gap-1 p-3 rounded-2xl").style(
+                            "background: var(--ac-surface-soft); border: 1px solid var(--ac-border)"
+                        ):
+                            ui.label(no).classes("text-lg font-bold ac-gradient-text")
+                            ui.label(title).classes("text-[14px] font-semibold")
+                            ui.label(desc).classes("ac-hint")
+
+    return Panel(key="overview", title="总览", icon="space_dashboard", container=container)
+
+
+# ─────────────────────────────────────────────────────────────
+# 面板 2：声音克隆（零样本）
+# ─────────────────────────────────────────────────────────────
+def build_zero_shot_panel() -> Panel:
+    with ui.column().classes("w-full gap-5") as container:
+        with theme.card(dense=True):
+            with ui.column().classes("w-full gap-1"):
+                ui.label("声音克隆 · 零样本").classes("text-xl font-bold")
+                ui.label(
+                    "上传或录制一段 3~10 秒的参考音频，即可用该音色合成任意文本；"
+                    "提供参考音频对应的文字可进一步克隆精度。"
+                ).classes("ac-hint")
+
+        with grid("grid-cols-1 lg:grid-cols-12"):
+            with theme.card(classes="lg:col-span-5"):
+                with theme.section("参考音频", icon="graphic_eq"):
+                    audio = AudioInput(
+                        title="上传或录制参考音频",
+                        upload_label="拖放参考音频，或点击选择文件",
+                        hint_text="支持 wav / mp3 / flac，时长 1~30 秒，建议 3~10 秒清晰人声",
+                        allow_record=True,
+                    )
+                    prompt_text = (
+                        ui.input(
+                            label="参考文本（可选，提升克隆精度）",
+                            placeholder="请输入参考音频对应的文字内容…",
+                        )
+                        .classes("w-full ac-field")
+                        .props("outlined rounded")
+                    )
+
+            with theme.card(classes="lg:col-span-7"):
+                with theme.section("合成文本", icon="edit_note"):
+                    text = CharCounterTextarea(
+                        label="输入合成文本",
+                        value="你好，欢迎使用个人声音克隆系统，我是由AI生成的语音助手。",
+                        placeholder="请输入需要合成的文本…",
+                        rows=4,
+                    )
+                    speed = SpeedControl()
+                    theme.divider()
+                    with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                        generate = BusyButton("开始合成", icon="auto_awesome", classes="ac-btn-primary px-5")
+                        clear = (
+                            ui.button("清空", icon="restart_alt")
+                            .props("flat no-caps")
+                            .classes("ac-btn-ghost")
+                        )
+
+        result = AudioResult(title="合成结果")
+
+    return Panel(
+        key="zero_shot",
+        title="声音克隆（零样本）",
+        icon="record_voice_over",
+        container=container,
+        widgets={
+            "audio": audio,
+            "prompt_text": prompt_text,
+            "text": text,
+            "speed": speed,
+            "generate": generate,
+            "clear": clear,
+            "result": result,
+        },
     )
-    with gr.Row():
-        with gr.Column():
-            gr.Markdown("### 文本转音频 (T2A)")
-            t2a_text = gr.Textbox(
-                label="文本提示（描述声音/音乐/音效）",
-                lines=2,
-                value="轻柔的钢琴背景音乐",
-            )
-            t2a_duration = gr.Number(value=2.0, label="时长(秒)", minimum=0.5, maximum=30)
-            t2a_generate = gr.Button("生成", variant="primary")
-            t2a_output = gr.Audio(label="生成音频")
 
-        with gr.Column():
-            gr.Markdown("### 音频到音频 (A2A)")
-            a2a_audio = gr.Audio(sources=["upload"], type="filepath", label="上传音频")
-            a2a_instruct = gr.Textbox(label="转换指令（如“改成男声”）", value="改成男声", lines=1)
-            a2a_generate = gr.Button("转换", variant="primary")
-            a2a_output = gr.Audio(label="转换结果")
 
-    with gr.Row():
-        with gr.Column():
-            gr.Markdown("### 音频分类")
-            cls_audio = gr.Audio(sources=["upload"], type="filepath", label="上传音频")
-            cls_generate = gr.Button("分类", variant="primary")
-            cls_output = gr.Textbox(label="分类结果", lines=4, interactive=False)
+# ─────────────────────────────────────────────────────────────
+# 面板 3：跨语言合成
+# ─────────────────────────────────────────────────────────────
+def build_cross_lingual_panel() -> Panel:
+    with ui.column().classes("w-full gap-5") as container:
+        with theme.card(dense=True):
+            with ui.column().classes("w-full gap-1"):
+                ui.label("跨语言合成").classes("text-xl font-bold")
+                ui.label(
+                    "使用源语言的音色合成目标语言语音，无需提供参考音频的文本转录。"
+                ).classes("ac-hint")
 
-        with gr.Column():
-            gr.Markdown("### 语音活动检测 (VAD)")
-            vad_audio = gr.Audio(sources=["upload"], type="filepath", label="上传音频")
-            vad_generate = gr.Button("检测", variant="primary")
-            vad_output = gr.Textbox(label="语音片段 (start-end)", lines=4, interactive=False)
+        with grid("grid-cols-1 lg:grid-cols-12"):
+            with theme.card(classes="lg:col-span-5"):
+                with theme.section("参考音频（源语言音色）", icon="graphic_eq"):
+                    audio = AudioInput(
+                        title="上传参考音频",
+                        upload_label="拖放参考音频，或点击选择文件",
+                        hint_text="支持 wav / mp3 / flac，时长 1~30 秒",
+                    )
 
-    return {
-        "t2a_text": t2a_text,
-        "t2a_duration": t2a_duration,
-        "t2a_generate": t2a_generate,
-        "t2a_output": t2a_output,
-        "a2a_audio": a2a_audio,
-        "a2a_instruct": a2a_instruct,
-        "a2a_generate": a2a_generate,
-        "a2a_output": a2a_output,
-        "cls_audio": cls_audio,
-        "cls_generate": cls_generate,
-        "cls_output": cls_output,
-        "vad_audio": vad_audio,
-        "vad_generate": vad_generate,
-        "vad_output": vad_output,
-    }
+            with theme.card(classes="lg:col-span-7"):
+                with theme.section("合成文本（目标语言）", icon="translate"):
+                    text = CharCounterTextarea(
+                        label="输入目标语言文本",
+                        value="Hello, this is a cross-lingual voice cloning demonstration.",
+                        placeholder="Enter the text in target language…",
+                        rows=4,
+                    )
+                    speed = SpeedControl()
+                    theme.divider()
+                    with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                        generate = BusyButton("开始合成", icon="auto_awesome", classes="ac-btn-primary px-5")
+                        clear = ui.button("清空", icon="restart_alt").props("flat no-caps").classes(
+                            "ac-btn-ghost"
+                        )
+
+        result = AudioResult(title="合成结果")
+
+    return Panel(
+        key="cross_lingual",
+        title="跨语言合成",
+        icon="translate",
+        container=container,
+        widgets={
+            "audio": audio,
+            "text": text,
+            "speed": speed,
+            "generate": generate,
+            "clear": clear,
+            "result": result,
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# 面板 4：自然语言控制
+# ─────────────────────────────────────────────────────────────
+def build_instruct_panel() -> Panel:
+    with ui.column().classes("w-full gap-5") as container:
+        with theme.card(dense=True):
+            with ui.column().classes("w-full gap-1"):
+                ui.label("自然语言控制").classes("text-xl font-bold")
+                ui.label(
+                    "用一句话描述语气、情感、方言或语速，模型会据此调整合成表现。"
+                ).classes("ac-hint")
+
+        with grid("grid-cols-1 lg:grid-cols-12"):
+            with theme.card(classes="lg:col-span-5"):
+                with theme.section("参考音频（音色来源）", icon="graphic_eq"):
+                    audio = AudioInput(
+                        title="上传参考音频",
+                        upload_label="拖放参考音频，或点击选择文件",
+                        hint_text="支持 wav / mp3 / flac，时长 1~30 秒",
+                    )
+                with theme.section("自然语言指令", icon="chat"):
+                    instruct = (
+                        ui.textarea(
+                            label="指令内容",
+                            value="请用开心的语气说",
+                            placeholder="例如：请用开心的语气说 / 请用广东话表达 / 请尽可能快地说",
+                        )
+                        .classes("w-full ac-field")
+                        .props("outlined rounded autogrow rows=2")
+                    )
+
+            with theme.card(classes="lg:col-span-7"):
+                with theme.section("合成文本", icon="edit_note"):
+                    text = CharCounterTextarea(
+                        label="输入合成文本",
+                        value="今天天气真好，适合出去走走，感受一下阳光和微风。",
+                        placeholder="请输入需要合成的文本…",
+                        rows=4,
+                    )
+                    speed = SpeedControl()
+                    theme.divider()
+                    with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                        generate = BusyButton("开始合成", icon="auto_awesome", classes="ac-btn-primary px-5")
+                        clear = ui.button("清空", icon="restart_alt").props("flat no-caps").classes(
+                            "ac-btn-ghost"
+                        )
+
+        result = AudioResult(title="合成结果")
+
+    return Panel(
+        key="instruct",
+        title="自然语言控制",
+        icon="psychology",
+        container=container,
+        widgets={
+            "audio": audio,
+            "instruct": instruct,
+            "text": text,
+            "speed": speed,
+            "generate": generate,
+            "clear": clear,
+            "result": result,
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# 面板 5：语音识别 (ASR)
+# ─────────────────────────────────────────────────────────────
+def build_asr_panel() -> Panel:
+    with ui.column().classes("w-full gap-5") as container:
+        with theme.card(dense=True):
+            with ui.column().classes("w-full gap-1"):
+                ui.label("语音识别 (ASR)").classes("text-xl font-bold")
+                ui.label("上传或录制音频，本地转为文字，支持最长 5 分钟。").classes("ac-hint")
+
+        with grid("grid-cols-1 lg:grid-cols-12"):
+            with theme.card(classes="lg:col-span-5"):
+                with theme.section("音频输入", icon="audio_file"):
+                    audio = AudioInput(
+                        title="上传或录制音频",
+                        upload_label="拖放音频文件，或点击选择文件",
+                        hint_text="支持 wav / mp3 / flac / ogg / m4a，最长 5 分钟",
+                        allow_record=True,
+                    )
+
+            with theme.card(classes="lg:col-span-7"):
+                with theme.section("识别结果", icon="subtitles"):
+                    result = TextResult(
+                        title="识别文本", placeholder="点击「开始识别」后在此显示结果…"
+                    )
+                    theme.divider()
+                    with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                        generate = BusyButton("开始识别", icon="hearing", classes="ac-btn-primary px-5")
+                        clear = ui.button("清空", icon="restart_alt").props("flat no-caps").classes(
+                            "ac-btn-ghost"
+                        )
+
+    return Panel(
+        key="asr",
+        title="语音识别 (ASR)",
+        icon="hearing",
+        container=container,
+        widgets={
+            "audio": audio,
+            "generate": generate,
+            "clear": clear,
+            "result": result,
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# 面板 6：多任务实验台
+# ─────────────────────────────────────────────────────────────
+def _capability_badge(supported: bool) -> None:
+    theme.chip("后端支持" if supported else "后端不支持", tone="ok" if supported else "warn")
+
+
+def build_multitask_panel(backend: Any) -> Panel:
+    with ui.column().classes("w-full gap-5") as container:
+        with theme.card(dense=True):
+            with ui.column().classes("w-full gap-1"):
+                ui.label("多任务实验台").classes("text-xl font-bold")
+                ui.label(
+                    "文本转音频 / 音频到音频 / 音频分类 / 语音活动检测。"
+                    "各任务按后端能力动态可用，使用 dummy-omni 全能力后端可全部体验。"
+                ).classes("ac-hint")
+
+        with grid("grid-cols-1 xl:grid-cols-2"):
+            # T2A
+            with theme.card():
+                with ui.row().classes("w-full items-center justify-between"):
+                    theme.section_heading("文本转音频 (T2A)", icon="music_note")
+                    _capability_badge(backend.supports(TextToAudioCapability))
+                t2a_text = (
+                    ui.textarea(label="文本提示（描述声音/音乐/音效）", value="轻柔的钢琴背景音乐")
+                    .classes("w-full ac-field")
+                    .props("outlined rounded autogrow rows=2")
+                )
+                t2a_duration = ui.number(label="时长（秒）", value=2.0, min=0.5, max=30, step=0.5).classes(
+                    "w-40 ac-field"
+                )
+                t2a_generate = BusyButton("生成", icon="music_note", classes="ac-btn-primary px-4")
+                t2a_result = AudioResult(title="生成结果", autoplay=False)
+
+            # A2A
+            with theme.card():
+                with ui.row().classes("w-full items-center justify-between"):
+                    theme.section_heading("音频到音频 (A2A)", icon="transform")
+                    _capability_badge(backend.supports(AudioToAudioCapability))
+                a2a_audio = AudioInput(
+                    title="上传音频",
+                    upload_label="拖放音频文件，或点击选择文件",
+                    hint_text="时长上限 300 秒",
+                )
+                a2a_instruct = (
+                    ui.input(label="转换指令", value="改成男声", placeholder="例如：改成男声")
+                    .classes("w-full ac-field")
+                    .props("outlined rounded")
+                )
+                a2a_generate = BusyButton("转换", icon="transform", classes="ac-btn-primary px-4")
+                a2a_result = AudioResult(title="转换结果", autoplay=False)
+
+            # 音频分类
+            with theme.card():
+                with ui.row().classes("w-full items-center justify-between"):
+                    theme.section_heading("音频分类", icon="category")
+                    _capability_badge(backend.supports(AudioClassificationCapability))
+                cls_audio = AudioInput(
+                    title="上传音频",
+                    upload_label="拖放音频文件，或点击选择文件",
+                    hint_text="时长上限 300 秒",
+                )
+                cls_generate = BusyButton("分类", icon="category", classes="ac-btn-primary px-4")
+                cls_result = TextResult(title="分类结果（标签: 置信度）")
+
+            # VAD
+            with theme.card():
+                with ui.row().classes("w-full items-center justify-between"):
+                    theme.section_heading("语音活动检测 (VAD)", icon="graphic_eq")
+                    _capability_badge(backend.supports(VoiceActivityCapability))
+                vad_audio = AudioInput(
+                    title="上传音频",
+                    upload_label="拖放音频文件，或点击选择文件",
+                    hint_text="时长上限 300 秒",
+                )
+                vad_generate = BusyButton("检测", icon="graphic_eq", classes="ac-btn-primary px-4")
+                vad_result = TextResult(title="语音片段（起止时间）")
+
+    return Panel(
+        key="multitask",
+        title="多任务实验台",
+        icon="science",
+        container=container,
+        widgets={
+            "t2a_text": t2a_text,
+            "t2a_duration": t2a_duration,
+            "t2a_generate": t2a_generate,
+            "t2a_result": t2a_result,
+            "a2a_audio": a2a_audio,
+            "a2a_instruct": a2a_instruct,
+            "a2a_generate": a2a_generate,
+            "a2a_result": a2a_result,
+            "cls_audio": cls_audio,
+            "cls_generate": cls_generate,
+            "cls_result": cls_result,
+            "vad_audio": vad_audio,
+            "vad_generate": vad_generate,
+            "vad_result": vad_result,
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# 面板 7：使用指南
+# ─────────────────────────────────────────────────────────────
+def build_guide_panel() -> Panel:
+    features = [
+        ("record_voice_over", "声音克隆（零样本）", "上传 3~10 秒参考音频 + 输入文本即可克隆音色；提供参考文本可提升精度"),
+        ("translate", "跨语言合成", "使用源语言音色合成目标语言语音，无需提供文本转录"),
+        ("psychology", "自然语言控制", "通过指令控制语气/情感/方言/语速，如「请用开心的语气说」"),
+        ("hearing", "语音识别 (ASR)", "上传或录制音频转为文字，支持最长 5 分钟"),
+        ("science", "多任务实验台", "T2A 生成 / A2A 变声 / 音频分类 / VAD，按后端能力可用"),
+    ]
+    specs = [
+        ("时长", "3~10 秒（硬性限制 1~30 秒）"),
+        ("格式", "wav / mp3 / flac"),
+        ("采样率", "≥ 16kHz（自动重采样到 24kHz）"),
+        ("内容", "清晰人声，避免背景噪音和音乐"),
+    ]
+    notices = [
+        "合成文本上限 300 字符，超出将拒绝合成",
+        "首次加载 TTS 模型约需 30~60 秒，请等待状态面板显示就绪后再操作",
+        "ASR 服务首次启动约需 10~20 秒（模型加载到 Metal GPU）",
+        "若启动报 503/网络错误，请确认系统代理已绕过 localhost（项目已默认配置）",
+        "若端口被占用，使用 --port 参数指定其他端口",
+    ]
+
+    with ui.column().classes("w-full gap-5") as container:
+        with theme.card(dense=True):
+            with ui.column().classes("w-full gap-1"):
+                ui.label("使用指南").classes("text-xl font-bold")
+                ui.label("功能速览、参考音频规格与常见注意事项。").classes("ac-hint")
+
+        with theme.card():
+            with theme.section("功能速览", icon="apps"):
+                with grid("grid-cols-1 md:grid-cols-2 xl:grid-cols-3"):
+                    for icon, title, desc in features:
+                        with ui.column().classes("gap-1 p-4 rounded-2xl").style(
+                            "background: var(--ac-surface-soft); border: 1px solid var(--ac-border)"
+                        ):
+                            ui.icon(icon).classes("text-[22px] text-primary")
+                            ui.label(title).classes("text-[14px] font-semibold")
+                            ui.label(desc).classes("ac-hint")
+
+        with grid("grid-cols-1 lg:grid-cols-2"):
+            with theme.card():
+                with theme.section("参考音频规格", icon="mic"):
+                    with grid("grid-cols-2"):
+                        for label, value in specs:
+                            with ui.column().classes("gap-1 p-3 rounded-2xl").style(
+                                "background: var(--ac-surface-soft); border: 1px solid var(--ac-border)"
+                            ):
+                                ui.label(label).classes("ac-eyebrow")
+                                ui.label(value).classes("text-[13px] font-medium")
+
+            with theme.card():
+                with theme.section("注意事项", icon="error_outline"):
+                    with ui.column().classes("w-full gap-2"):
+                        for text in notices:
+                            with ui.row().classes("items-start gap-2"):
+                                ui.icon("fiber_manual_record").classes("text-[8px] mt-[6px] text-primary")
+                                ui.label(text).classes("text-[13px] flex-1").style("line-height: 1.6")
+
+            with theme.card(classes="lg:col-span-2"):
+                with theme.section("输出说明", icon="folder_open"):
+                    ui.label("合成音频保存于 outputs/ 目录").classes("text-[13px]")
+                    ui.label(
+                        "可通过环境变量 AUDIOCLONE_OUTPUT_KEEP_MAX 设置保留文件数上限"
+                        "（>0 自动清理旧输出，0 不清理）。"
+                    ).classes("ac-hint")
+
+    return Panel(key="guide", title="使用指南", icon="menu_book", container=container)
+
+
+__all__ = [
+    "Panel",
+    "SystemStatus",
+    "build_asr_panel",
+    "build_cross_lingual_panel",
+    "build_guide_panel",
+    "build_instruct_panel",
+    "build_multitask_panel",
+    "build_overview_panel",
+    "build_zero_shot_panel",
+]

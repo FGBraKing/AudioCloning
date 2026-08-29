@@ -35,6 +35,8 @@ from audioclone.config import (
     ensure_logs_dir,
 )
 from audioclone.core.capabilities import ModelBackend, SpeechRecognitionCapability
+from audioclone.core.exceptions import ModelLoadError
+from audioclone.core.model_slot import ModelSlot
 from audioclone.utils.audio import resample_audio, to_mono
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
 
     name = "qwen3-asr-llama"
     capabilities = (SpeechRecognitionCapability,)
+    slot = ModelSlot.ASR
 
     def __init__(
         self,
@@ -83,6 +86,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         self.base_url = f"http://{self.host}:{self.port}"
         self.max_segment_sec = max_segment_sec  # 长音频分片阈值（秒），避免整段 base64 膨胀
         self.overlap_sec = overlap_sec          # 分片间重叠（秒），避免切词导致识别质量下降
+        self._start_timeout = ASR_READY_TIMEOUT  # 供 start(timeout) → load() 传递
 
         self._process: subprocess.Popen[str] | None = None
         self._model_path: Path | None = None
@@ -129,7 +133,30 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         return self._model_path is not None and self._mmproj_path is not None
 
     # ─── 生命周期 ────────────────────────────────────────────
+    # ASR 后端的「加载」即启动 llama-server 子进程；统一收敛到基类的
+    # load()/close() 模板方法，以便与 TTS 共用同一套槽位守卫。
+    def _load(self) -> None:
+        if not self._start_server(self._start_timeout):
+            raise ModelLoadError("ASR 服务启动失败（详见 logs/asr_llama_server.log）")
+
+    def _close(self) -> None:
+        self._stop_server()
+
     def start(self, timeout: float = ASR_READY_TIMEOUT) -> bool:
+        """启动 ASR 服务（等价于 ``load()``，保留布尔返回值便于入口判空）。"""
+        self._start_timeout = timeout
+        try:
+            self.load()
+        except ModelLoadError as e:
+            logger.error("[ASR] %s", e)
+            return False
+        return self.is_ready()
+
+    def stop(self) -> None:
+        """停止 ASR 服务（等价于 ``close()``）。"""
+        self.close()
+
+    def _start_server(self, timeout: float) -> bool:
         if not self.is_model_available:
             logger.error("[ASR] 模型文件不完整，无法启动服务")
             return False
@@ -201,7 +228,7 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
         except OSError:
             return ""
 
-    def stop(self) -> None:
+    def _stop_server(self) -> None:
         if self._process is not None:
             logger.info("[ASR] 正在停止 llama-server...")
             self._process.terminate()
@@ -213,9 +240,6 @@ class Qwen3AsrLlamaBackend(ModelBackend, SpeechRecognitionCapability):
             self._process = None
         self._close_log()
         logger.info("[ASR] llama-server 已停止")
-
-    def close(self) -> None:
-        self.stop()
 
     def is_ready(self) -> bool:
         try:

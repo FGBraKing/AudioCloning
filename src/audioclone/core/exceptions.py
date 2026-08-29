@@ -23,10 +23,15 @@ class ModelLoadError(AudioError):
     """模型加载失败。"""
 
 
+class ModelSlotError(AudioError):
+    """试图在同一槽位加载第二个不同后端（运行时每种任务只允许一个模型）。"""
+
+
 __all__ = [
     "AudioError",
     "BackendUnavailable",
     "CapabilityError",
     "InvalidAudioInput",
     "ModelLoadError",
+    "ModelSlotError",
 ]

@@ -5,6 +5,41 @@
 
 ## [Unreleased]
 
+### 变更（WebUI 迁移：Gradio → NiceGUI）
+- 界面框架替换为 NiceGUI（`nicegui>=3.16`），移除 `gradio` 依赖；入口 `audioclone-webui` 不变
+- 新增 `webui/theme.py`（设计令牌与全局样式）、`webui/widgets.py`（复合控件）、
+  `webui/media.py`（上传/结果落盘）、`webui/errors.py`（框架无关的 `UIError`）
+- 界面重做：顶栏 + 侧边导航（窄屏折叠为下拉菜单）的单页布局，玻璃拟态卡片，
+  深浅色主题（默认深色，`--theme dark|light`），响应式栅格（≥1024px 双栏）
+- 录音能力自研实现：AudioWorklet 采集 PCM → 前端编码 WAV → `POST /webui/api/recording` 落盘，
+  规避 webm/opus 的服务端解码兼容问题
+- 推理调用统一经 `run.io_bound` + 并发闸门（`AUDIOCLONE_WEBUI_CONCURRENCY`），
+  不阻塞 asyncio 事件循环；结果落盘 `outputs/` 后可试听与下载
+- handler 层与界面框架解耦：`gr.Error` → `UIError`，`@gradio_error` → `@ui_error`，
+  业务逻辑与返回契约不变（单测同步迁移）
+- 配置项重命名：`GRADIO_PORT/HOST/MAX_QUEUE/CONCURRENCY` → `WEBUI_PORT/HOST/CONCURRENCY`
+  （`MAX_QUEUE` 无对应语义，移除）
+
+### 变更（新增 Qwen3-TTS 后端 + 模型槽位守卫）
+- 新增 `core/backends/qwen3_tts_mlx.py`，支持三个 MLX 模型变体：
+  - `qwen3-tts-base-mlx` → `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit`（zero_shot / cross_lingual）
+  - `qwen3-tts-customvoice-mlx` → `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit`（instruct，预设音色）
+  - `qwen3-tts-voicedesign-mlx` → `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit`（instruct，描述造音色）
+- 能力层新增 `TextToSpeechCapability.supported_modes`（默认全部模式）：后端声明自己支持的
+  推理模式子集，`TTSService` 在编排前 fail-fast，避免把不兼容的调用丢给模型
+- 加载时显式锁定 `qwen3_tts` 架构：规避 mlx_audio 按目录名片段猜测架构导致
+  `Qwen3-TTS-...` 被误判为另一个 `qwen3` 模块的问题；模型目录统一命名为 `qwen3_tts_<变体>`
+- 新增 `core/model_slot.py` 模型槽位守卫（严格）：`ModelBackend.load()` 占槽、`close()` 释放，
+  同一槽位被第二个不同后端占用时抛 `ModelSlotError`；`_load()` 失败自动回滚槽位。
+  TTS 与 ASR 各一个槽位，即运行时恒定「一个 TTS 模型 + 一个 ASR 模型」
+- `ModelBackend.load()/close()` 改为模板方法（子类实现 `_load()`/`_close()`），
+  CosyVoice3 与 Qwen3-ASR 后端同步适配；无状态后端（如 dummy）不占槽
+- ASR 生命周期统一：`Qwen3AsrLlamaBackend.load()` = 启动 llama-server、`close()` = 停止，
+  `start()`/`stop()` 保留为兼容别名（仍返回 bool）
+- `audioclone-download-tts/asr` 新增 `--backend NAME`，可为任意已登记后端下载模型
+- WebUI 总览面板新增「支持模式」；TTS 后端加载失败改为可读错误（不再是原始堆栈）
+- `/api/health` 新增 `model_slots` 字段，暴露当前槽位占用
+
 ### 计划
 - 接入 T2A / A2A / 音频分类 / VAD 真实后端（v0.3.0，需真实模型）
 

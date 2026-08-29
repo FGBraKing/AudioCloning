@@ -69,7 +69,7 @@ brew install llama.cpp
 | `AUDIOCLONE_SAMPLE_RATE` | `24000` | TTS 输出采样率 |
 | `AUDIOCLONE_REF_AUDIO_MAX_SEC` / `MIN_SEC` / `MIN_SR` | `30` / `1` / `8000` | 参考音频校验 |
 | `AUDIOCLONE_MAX_TEXT_LENGTH` | `300` | 单次合成最大字符数 |
-| `AUDIOCLONE_GRADIO_PORT` / `HOST` / `MAX_QUEUE` / `CONCURRENCY` | `7860` / `127.0.0.1` / `4` / `2` | WebUI 参数 |
+| `AUDIOCLONE_WEBUI_PORT` / `HOST` / `CONCURRENCY` | `7860` / `127.0.0.1` / `2` | WebUI 参数（CONCURRENCY 为推理并发上限） |
 | `AUDIOCLONE_ASR_SERVER_HOST` / `PORT` / `CTX_SIZE` / `N_GPU_LAYERS` | `127.0.0.1` / `8090` / `4096` / `99` | llama-server 参数 |
 | `AUDIOCLONE_ASR_AUDIO_MAX_SEC` / `SAMPLE_RATE` / `MAX_SEGMENT_SEC` | `300` / `16000` / `60` | ASR 时长/采样率/分片阈值 |
 | `AUDIOCLONE_ASR_HTTP_TIMEOUT` / `READY_TIMEOUT` | `120.0` / `60.0` | ASR HTTP / 就绪等待超时（秒） |
@@ -130,7 +130,29 @@ uv run audioclone-webui --no_asr   # 禁用 ASR
 uv run audioclone-webui --tts-backend dummy-omni --asr-backend dummy-omni
 ```
 
-### 5.3 启动 REST API
+### 5.3 切换 TTS 后端（含 Qwen3-TTS 三变体）
+
+| 后端名 | 模型 | 支持模式 | 说明 |
+|--------|------|----------|------|
+| `cosyvoice3-mlx` | Fun-CosyVoice3-0.5B-2512-fp16 | 全部三种 | 默认后端 |
+| `qwen3-tts-base-mlx` | Qwen3-TTS-12Hz-1.7B-Base-8bit | zero_shot / cross_lingual | 参考音频克隆；给 `ref_text` 走 ICL，不给走 speaker-encoder |
+| `qwen3-tts-customvoice-mlx` | Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit | instruct | 预设音色（默认 `Vivian`）+ 情绪/风格指令 |
+| `qwen3-tts-voicedesign-mlx` | Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit | instruct | 用自然语言描述音色，无需参考音频 |
+
+```bash
+uv run audioclone-download-tts --backend qwen3-tts-base-mlx
+uv run audioclone-webui --tts-backend qwen3-tts-base-mlx
+```
+
+> **依赖要求**：Qwen3-TTS 需要 `mlx_audio` 提供 `qwen3_tts` 架构（mlx-audio ≥ 0.3.0）。
+> 当前 `mlx_audio` 由 mlx-audio-plus 0.1.8（CosyVoice 分支，基线 0.2.9）提供，不含该模块；
+> 上游 mlx-audio 0.3.0+ 虽含该模块但已移除 CosyVoice 实现，二者互斥。
+> 依赖未就绪时选择这三个后端会中止启动并打印修复指引，不会残留半加载状态。
+>
+> **模式不匹配**：若当前后端不支持所选模式（如用 CustomVoice 跑「零样本克隆」），
+> 服务层会在编排前返回明确错误（WebUI 弹提示 / API 返回 400），不会进入模型推理。
+
+### 5.4 启动 REST API
 
 ```bash
 uv run audioclone-api              # http://127.0.0.1:8000（见 §12 部署护栏）
@@ -145,10 +167,10 @@ uv run audioclone-api              # http://127.0.0.1:8000（见 §12 部署护�
 
 | 命令 | 说明 |
 |------|------|
-| `uv run audioclone-webui [--port 7860] [--host ...] [--model_dir X] [--asr_model_dir X] [--tts-backend NAME] [--asr-backend NAME] [--no_asr]` | 启动 Gradio WebUI |
+| `uv run audioclone-webui [--port 7860] [--host ...] [--model_dir X] [--asr_model_dir X] [--tts-backend NAME] [--asr-backend NAME] [--no_asr] [--theme dark\|light] [--no-browser]` | 启动 NiceGUI WebUI |
 | `uv run audioclone-api [--host 127.0.0.1] [--port 8000]` | 启动 FastAPI |
-| `uv run audioclone-download-tts [--local_dir X]` | 下载 TTS 模型 |
-| `uv run audioclone-download-asr [--local_dir X]` | 下载 ASR 模型 |
+| `uv run audioclone-download-tts [--local_dir X] [--backend NAME]` | 下载 TTS 模型（`--backend` 可指定任意已登记后端） |
+| `uv run audioclone-download-asr [--local_dir X] [--backend NAME]` | 下载 ASR 模型 |
 | `uv run pytest` | 运行测试（集成默认跳过） |
 | `uv run pytest -m "not integration"` | 单元/架构/契约/API 测试 |
 | `uv run pytest --cov=audioclone` | 带覆盖率（门槛 60%） |

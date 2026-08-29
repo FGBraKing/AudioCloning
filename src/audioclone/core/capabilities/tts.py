@@ -17,6 +17,11 @@ class TextToSpeechCapability(Capability, ABC):
 
     sample_rate: int
 
+    #: 该后端支持的推理模式（``TTS_MODES`` 的子集）。
+    #: 并非每个模型都支持全部模式（如 Qwen3-TTS CustomVoice 仅支持 instruct），
+    #: 服务层据此在编排前 fail-fast，而不是把不兼容的调用丢给模型。
+    supported_modes: tuple[str, ...] = TTS_MODES
+
     @abstractmethod
     def synthesize(
         self,

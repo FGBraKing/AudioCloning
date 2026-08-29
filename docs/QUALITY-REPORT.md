@@ -41,7 +41,7 @@ registry 单池化、采样率实时读取、ASR 分片重叠、segments 递归�
 
 ### 2.1 现状
 ```
-展示层     webui/(Gradio)   api/(FastAPI, 依赖注入, trace_id + /api/metrics + /api/outputs)
+展示层     webui/(NiceGUI)  api/(FastAPI, 依赖注入, trace_id + /api/metrics + /api/outputs)
 服务层     core/service/*   7 个 Service；RLock 串行、领域异常、进度回调
 能力层     core/capabilities/*  ABC+@abstractmethod，未实现即构造失败
 实现层     core/backends/*  registry 单池（按名注册 + 按能力查询）

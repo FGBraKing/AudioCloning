@@ -137,6 +137,13 @@ class TTSService:
         if mode not in TTS_MODES:
             raise InvalidAudioInput(f"未知的推理模式: {mode}")
 
+        supported = getattr(self.backend, "supported_modes", TTS_MODES)
+        if mode not in supported:
+            raise InvalidAudioInput(
+                f"后端 {getattr(self.backend, 'name', self.backend)} 不支持推理模式 '{mode}'，"
+                f"仅支持: {', '.join(supported) or '（无）'}"
+            )
+
         segments = self._segmenter.split(text, MAX_TEXT_LENGTH)
         if not segments:
             raise InvalidAudioInput("合成文本为空")

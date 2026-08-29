@@ -1,7 +1,7 @@
 """共享校验助手 — 供 API 与 WebUI handler 复用，避免校验逻辑重复。
 
 约定：不合法统一抛 ``InvalidAudioInput``，由上层（FastAPI exception_handler /
-``@gradio_error`` 装饰器）转换为 400 或 ``gr.Error``。
+``@ui_error`` 装饰器）转换为 400 或界面提示（``UIError``）。
 """
 
 from __future__ import annotations

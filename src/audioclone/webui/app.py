@@ -1,31 +1,34 @@
-"""AudioCloning Gradio WebUI 入口 (命令行: ``uv run audioclone-webui``)。"""
+"""AudioCloning NiceGUI WebUI 入口 (命令行: ``uv run audioclone-webui``)。
+
+分层与 Gradio 版本一致：``components`` 出视图 → ``handlers`` 出逻辑 → 本模块装配事件与路由。
+推理调用一律经 ``run.io_bound`` 放入线程池，避免阻塞 asyncio 事件循环。
+"""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import time
-from typing import cast
+from typing import Any, cast
 
-# 本地回环不受系统代理影响（在 gradio/httpx 等网络库导入前设置）
+# 本地回环不受系统代理影响（在 httpx 等网络库导入前设置）
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
-import gradio as gr
+from nicegui import app, ui  # noqa: E402
 
-from audioclone import __version__
-from audioclone.config import (
+from audioclone import __version__  # noqa: E402
+from audioclone.config import (  # noqa: E402
     ASR_SERVER_PORT,
-    GRADIO_CONCURRENCY,
-    GRADIO_HOST,
-    GRADIO_MAX_QUEUE,
-    GRADIO_PORT,
     LOG_JSON,
-    MAX_TEXT_LENGTH,
     MODEL_ID,
+    WEBUI_CONCURRENCY,
+    WEBUI_HOST,
+    WEBUI_PORT,
 )
-from audioclone.core import (
+from audioclone.core import (  # noqa: E402
     ASRService,
     ModelBackend,
     TTSService,
@@ -33,20 +36,25 @@ from audioclone.core import (
     create_tts_backend,
     list_backend_capabilities,
 )
-from audioclone.core.capabilities import (
+from audioclone.core.capabilities import (  # noqa: E402
     SpeechRecognitionCapability,
     TextToSpeechCapability,
 )
-from audioclone.utils.logging_utils import configure_logging
-from audioclone.webui.components import (
-    build_asr_tab,
-    build_cross_lingual_tab,
-    build_instruct_tab,
-    build_multitask_tab,
-    build_system_status_panel,
-    build_zero_shot_tab,
+from audioclone.core.exceptions import ModelLoadError  # noqa: E402
+from audioclone.utils.logging_utils import configure_logging  # noqa: E402
+from audioclone.webui import media, theme, widgets  # noqa: E402
+from audioclone.webui.components import (  # noqa: E402
+    Panel,
+    SystemStatus,
+    build_asr_panel,
+    build_cross_lingual_panel,
+    build_guide_panel,
+    build_instruct_panel,
+    build_multitask_panel,
+    build_overview_panel,
+    build_zero_shot_panel,
 )
-from audioclone.webui.handlers import (
+from audioclone.webui.handlers import (  # noqa: E402
     make_asr_handler,
     make_cross_lingual_handler,
     make_instruct_handler,
@@ -56,201 +64,319 @@ from audioclone.webui.handlers import (
 
 logger = logging.getLogger(__name__)
 
+# 推理并发闸门：保护非线程安全的模型实现，避免多个请求同时进入后端
+_INFER_SEM = asyncio.Semaphore(max(1, WEBUI_CONCURRENCY))
 
-def build_ui(
+
+async def _infer(fn: Any, *args: Any) -> Any:
+    """受限并发地在线程池执行阻塞推理。"""
+    async with _INFER_SEM:
+        return await widgets.io_bound(fn, *args)
+
+
+def _tts_model_label(backend: ModelBackend) -> str:
+    """展示用的 TTS 模型标识：后端自带则用之，否则回落到配置模型。"""
+    return str(getattr(backend, "model_id", "") or MODEL_ID)
+
+
+# ─────────────────────────────────────────────────────────────
+# 页面骨架
+# ─────────────────────────────────────────────────────────────
+def _build_index() -> None:
+    """构建单页应用骨架：顶栏 + 侧边导航 + 面板切换。"""
+    status: SystemStatus = app.state.webui_status
+    engine: TTSService = app.state.engine
+    asr_engine: ASRService = app.state.asr_engine
+    backend: ModelBackend = app.state.backend
+
+    dark = ui.dark_mode(app.state.webui_dark)
+    nav_state = {"open": False}
+
+    def toggle_mobile_nav() -> None:
+        nav_state["open"] = not nav_state["open"]
+        if nav_state["open"]:
+            mobile_nav.classes(add="ac-mobile-nav--open")
+        else:
+            mobile_nav.classes(remove="ac-mobile-nav--open")
+
+    # ── 顶栏 ──────────────────────────────────────────────
+    with ui.header().classes("items-center px-4 lg:px-6").style(
+        "background: var(--ac-surface); backdrop-filter: blur(16px);"
+        "border-bottom: 1px solid var(--ac-border); color: var(--ac-text);"
+    ):
+        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+            ui.button(icon="menu", color=None, on_click=toggle_mobile_nav).props(
+                "flat dense round"
+            ).classes("ac-under-lg").tooltip("功能导航")
+
+            with ui.row().classes("items-center gap-2"):
+                with ui.element("div").classes(
+                    "w-9 h-9 rounded-xl flex items-center justify-center text-white"
+                ).style("background-image: linear-gradient(135deg,#6366f1,#a855f7)"):
+                    ui.icon("graphic_eq").classes("text-[20px]")
+                ui.label("AudioCloning").classes("text-[17px] font-bold")
+                theme.chip(f"v{status.version}", tone="accent")
+
+            ui.element("div").classes("flex-1")
+
+            with ui.row().classes("items-center gap-2 ac-lg-up"):
+                theme.chip(f"TTS · {status.tts_backend}", tone="ok" if status.tts_ready else "err")
+                theme.chip(
+                    f"ASR · {status.asr_backend}" + (f" :{ASR_SERVER_PORT}" if status.asr_ready else ""),
+                    tone="ok" if status.asr_ready else "warn",
+                )
+
+            dark_btn = ui.button(icon="light_mode", color=None).props("flat dense round").tooltip(
+                "切换深浅色"
+            )
+
+    def toggle_dark() -> None:
+        dark.toggle()
+        dark_btn.props(f"icon={'light_mode' if dark.value else 'dark_mode'}")
+
+    dark_btn.on_click(toggle_dark)
+
+    # ── 主体：移动端导航 + 侧边导航 + 面板区 ────────────────
+    with ui.element("div").classes("w-full max-w-[1440px] mx-auto px-4 lg:px-6 py-5"):
+        mobile_nav = ui.element("div").classes("ac-mobile-nav flex-col gap-1 w-full")
+
+        with ui.element("div").classes("flex w-full gap-5 items-start"):
+            sidebar = ui.element("div").classes(
+                "ac-lg-up flex-col gap-1 w-[220px] shrink-0 sticky top-[76px]"
+            )
+            with ui.column().classes("flex-1 min-w-0"):
+                panels = [
+                    build_overview_panel(status),
+                    build_zero_shot_panel(),
+                    build_cross_lingual_panel(),
+                    build_instruct_panel(),
+                    build_asr_panel(),
+                    build_multitask_panel(backend),
+                    build_guide_panel(),
+                ]
+
+    _wire_navigation(panels, sidebar, mobile_nav, nav_state)
+    _wire_handlers(panels, engine, asr_engine, backend)
+
+
+def _wire_navigation(
+    panels: list[Panel],
+    sidebar: ui.element,
+    mobile_nav: ui.element,
+    nav_state: dict[str, bool],
+) -> None:
+    """创建导航项并绑定面板切换（桌面侧栏与移动端折叠菜单共用同一套按钮）。"""
+    nav_slots: dict[str, list[ui.button]] = {}
+    active = {"key": panels[0].key}
+
+    def select(key: str) -> None:
+        active["key"] = key
+        for panel in panels:
+            panel.set_visibility(panel.key == key)
+        for panel_key, buttons in nav_slots.items():
+            for button in buttons:
+                if panel_key == key:
+                    button.classes(add="ac-nav--active")
+                else:
+                    button.classes(remove="ac-nav--active")
+        nav_state["open"] = False
+        mobile_nav.classes(remove="ac-mobile-nav--open")
+
+    for container in (sidebar, mobile_nav):
+        with container:
+            ui.label("功能导航").classes("ac-eyebrow px-3 pb-1")
+            for panel in panels:
+                button = (
+                    ui.button(panel.title, icon=panel.icon, color=None)
+                    .props("flat no-caps align=left")
+                    .classes("ac-nav")
+                    .on_click(lambda _=None, key=panel.key: select(key))
+                )
+                nav_slots.setdefault(panel.key, []).append(button)
+
+    select(active["key"])
+
+
+def _wire_handlers(
+    panels: list[Panel],
     engine: TTSService,
     asr_engine: ASRService,
-    tts_load_sec: float | None = None,
-) -> gr.Blocks:
-    """构建完整 Gradio 界面。``tts_load_sec`` 为模型加载耗时（秒），用于状态面板展示。"""
-    demo = gr.Blocks(title="AudioCloning - 个人声音克隆系统")
+    backend: ModelBackend,
+) -> None:
+    """绑定各面板的业务事件（逻辑全部来自 handlers 层）。"""
+    by_key = {panel.key: panel for panel in panels}
+    zs, cl, inst = by_key["zero_shot"], by_key["cross_lingual"], by_key["instruct"]
+    asr_panel, mt = by_key["asr"], by_key["multitask"]
 
-    with demo:
-        gr.Markdown(
-            """
-            # AudioCloning - 音频模型体验工具箱 v{__version__}
-            基于 Fun-CosyVoice3-0.5B (MLX) | 支持零样本克隆、跨语言合成、自然语言指令控制、语音识别
-            """
+    zero_shot = make_zero_shot_handler(engine)
+    cross_lingual = make_cross_lingual_handler(engine)
+    instruct = make_instruct_handler(engine)
+    asr_handler = make_asr_handler(asr_engine)
+    mt_handlers = make_multitask_handlers(backend)
+
+    # ── 声音克隆（零样本） ─────────────────────────────────
+    async def on_zero_shot() -> None:
+        w = zs.widgets
+        out = await widgets.run_guarded(
+            w["generate"],
+            lambda: _infer(
+                zero_shot,
+                w["text"].value,
+                w["audio"].value,
+                None,
+                w["prompt_text"].value,
+                w["speed"].value,
+            ),
         )
+        if out:
+            sample_rate, audio = out
+            w["result"].show(audio, sample_rate, prefix="zero_shot")
 
-        # 系统状态面板
-        status = build_system_status_panel()
+    def clear_zero_shot() -> None:
+        zs["text"].set_value("")
+        zs["prompt_text"].set_value("")
+        zs["audio"].clear()
+        zs["speed"].reset()
+        zs["result"].clear()
 
-        tts_status_str = f"✅ **TTS 模型:** {MODEL_ID}"
-        asr_ready = asr_engine.is_ready()
-        asr_status_str = (
-            f"✅ **ASR 服务:** 运行中 (127.0.0.1:{ASR_SERVER_PORT})"
-            if asr_ready
-            else "⚠️ **ASR 服务:** 未就绪"
+    zs["generate"].on_click(on_zero_shot)
+    zs["clear"].on_click(clear_zero_shot)
+
+    # ── 跨语言合成 ─────────────────────────────────────────
+    async def on_cross_lingual() -> None:
+        w = cl.widgets
+        out = await widgets.run_guarded(
+            w["generate"],
+            lambda: _infer(cross_lingual, w["text"].value, w["audio"].value, w["speed"].value),
         )
-        load_info = f" | 模型加载耗时: {tts_load_sec:.1f}s" if tts_load_sec is not None else ""
-        device_str = (
-            f"🍎 **框架:** Apple MLX | 采样率: {engine.sample_rate}Hz | Metal GPU 加速{load_info}"
+        if out:
+            sample_rate, audio = out
+            w["result"].show(audio, sample_rate, prefix="cross_lingual")
+
+    def clear_cross_lingual() -> None:
+        cl["text"].set_value("")
+        cl["audio"].clear()
+        cl["speed"].reset()
+        cl["result"].clear()
+
+    cl["generate"].on_click(on_cross_lingual)
+    cl["clear"].on_click(clear_cross_lingual)
+
+    # ── 自然语言控制 ───────────────────────────────────────
+    async def on_instruct() -> None:
+        w = inst.widgets
+        out = await widgets.run_guarded(
+            w["generate"],
+            lambda: _infer(
+                instruct,
+                w["text"].value,
+                w["audio"].value,
+                w["instruct"].value,
+                w["speed"].value,
+            ),
         )
-        server_str = f"🌐 **WebUI:** http://localhost:{GRADIO_PORT} | **API:** http://localhost:8000"
+        if out:
+            sample_rate, audio = out
+            w["result"].show(audio, sample_rate, prefix="instruct")
 
-        demo.load(
-            fn=lambda: (tts_status_str, asr_status_str, device_str, server_str),
-            inputs=[],
-            outputs=[
-                status["tts_status"],
-                status["asr_status"],
-                status["device_info"],
-                status["server_info"],
-            ],
+    def clear_instruct() -> None:
+        inst["text"].set_value("")
+        inst["instruct"].set_value("")
+        inst["audio"].clear()
+        inst["speed"].reset()
+        inst["result"].clear()
+
+    inst["generate"].on_click(on_instruct)
+    inst["clear"].on_click(clear_instruct)
+
+    # ── 语音识别 (ASR) ─────────────────────────────────────
+    async def on_asr() -> None:
+        w = asr_panel.widgets
+        out = await widgets.run_guarded(
+            w["generate"], lambda: _infer(asr_handler, w["audio"].value, None)
         )
+        if out:
+            text, info = out
+            w["result"].show(text, note=info)
 
-        # 三个 Tab
-        with gr.Tabs():
-            with gr.Tab("声音克隆 (零样本)"):
-                zs = build_zero_shot_tab()
-                zs_handler = make_zero_shot_handler(engine)
-                zs["generate_btn"].click(
-                    fn=zs_handler,
-                    inputs=[
-                        zs["tts_text"],
-                        zs["prompt_wav_upload"],
-                        zs["prompt_wav_record"],
-                        zs["prompt_text"],
-                        zs["speed"],
-                    ],
-                    outputs=[zs["audio_output"]],
-                )
-                zs["clear_btn"].click(
-                    fn=lambda: ("", None, None, "", None),
-                    outputs=[
-                        zs["tts_text"],
-                        zs["prompt_wav_upload"],
-                        zs["prompt_wav_record"],
-                        zs["prompt_text"],
-                        zs["audio_output"],
-                    ],
-                )
+    def clear_asr() -> None:
+        asr_panel["audio"].clear()
+        asr_panel["result"].clear()
 
-            with gr.Tab("跨语言合成"):
-                cl = build_cross_lingual_tab()
-                cl_handler = make_cross_lingual_handler(engine)
-                cl["generate_btn"].click(
-                    fn=cl_handler,
-                    inputs=[cl["tts_text"], cl["prompt_wav"], cl["speed"]],
-                    outputs=[cl["audio_output"]],
-                )
-                cl["clear_btn"].click(
-                    fn=lambda: ("", None, None),
-                    outputs=[cl["tts_text"], cl["prompt_wav"], cl["audio_output"]],
-                )
+    asr_panel["generate"].on_click(on_asr)
+    asr_panel["clear"].on_click(clear_asr)
 
-            with gr.Tab("自然语言控制"):
-                inst = build_instruct_tab()
-                inst_handler = make_instruct_handler(engine)
-                inst["generate_btn"].click(
-                    fn=inst_handler,
-                    inputs=[
-                        inst["tts_text"],
-                        inst["prompt_wav"],
-                        inst["instruct_text"],
-                        inst["speed"],
-                    ],
-                    outputs=[inst["audio_output"]],
-                )
-                inst["clear_btn"].click(
-                    fn=lambda: ("", None, "", None),
-                    outputs=[
-                        inst["tts_text"],
-                        inst["prompt_wav"],
-                        inst["instruct_text"],
-                        inst["audio_output"],
-                    ],
-                )
-
-            with gr.Tab("语音识别 (ASR)"):
-                asr = build_asr_tab()
-                asr_handler = make_asr_handler(asr_engine)
-                asr["generate_btn"].click(
-                    fn=asr_handler,
-                    inputs=[asr["audio_upload"], asr["audio_record"]],
-                    outputs=[asr["text_output"], asr["info"]],
-                )
-                asr["clear_btn"].click(
-                    fn=lambda: (None, None, "", ""),
-                    outputs=[
-                        asr["audio_upload"],
-                        asr["audio_record"],
-                        asr["text_output"],
-                        asr["info"],
-                    ],
-                )
-
-            with gr.Tab("多任务实验台"):
-                mt = build_multitask_tab()
-                mt_handlers = make_multitask_handlers(cast(ModelBackend, engine.backend))
-                mt["t2a_generate"].click(
-                    fn=mt_handlers["t2a"],
-                    inputs=[mt["t2a_text"], mt["t2a_duration"]],
-                    outputs=[mt["t2a_output"]],
-                )
-                mt["a2a_generate"].click(
-                    fn=mt_handlers["a2a"],
-                    inputs=[mt["a2a_audio"], mt["a2a_instruct"]],
-                    outputs=[mt["a2a_output"]],
-                )
-                mt["cls_generate"].click(
-                    fn=mt_handlers["classify"],
-                    inputs=[mt["cls_audio"]],
-                    outputs=[mt["cls_output"]],
-                )
-                mt["vad_generate"].click(
-                    fn=mt_handlers["vad"],
-                    inputs=[mt["vad_audio"]],
-                    outputs=[mt["vad_output"]],
-                )
-
-        gr.Markdown(
-            "---\n"
-            "### 📖 使用指南\n"
-            "\n"
-            "| 功能 Tab | 说明 |\n"
-            "|----------|------|\n"
-            "| **声音克隆 (零样本)** | 上传 3~10 秒参考音频 + 输入文本，即可克隆音色。提供参考文本可提升精度 |\n"
-            "| **跨语言合成** | 使用源语言音色合成目标语言语音，无需提供文本转录 |\n"
-            "| **自然语言控制** | 通过指令控制语气/情感/语速，如“请用开心的语气说” |\n"
-            "| **语音识别 (ASR)** | 上传或录制音频，转为文字，支持最长 5 分钟 |\n"
-            "| **多任务实验台** | T2A 生成 / A2A 变声 / 音频分类 / VAD，按后端能力可用（dummy-omni 全支持） |\n"
-            "\n"
-            "### 🎙️ 参考音频规格\n"
-            "\n"
-            "- 时长: **3~10 秒**（硬性限制 1~30 秒）\n"
-            "- 格式: wav / mp3 / flac\n"
-            "- 采样率: ≥ 16kHz（系统自动重采样到 24kHz）\n"
-            "- 内容: 清晰人声，避免背景噪音和音乐\n"
-            "\n"
-            "### ⚠️ 注意事项\n"
-            "\n"
-            f"- 合成文本上限 **{MAX_TEXT_LENGTH} 字符**，超出将拒绝合成\n"
-            "- 首次加载 TTS 模型约需 **30~60 秒**，请等待状态面板显示 ✅ 后再操作\n"
-            "- ASR 服务首次启动约需 10~20 秒（模型加载到 Metal GPU）\n"
-            "- 若启动报 503/网络错误，请确认系统代理已绕过 localhost（项目已默认配置）\n"
-            "- 若端口被占用，使用 `--port` 参数指定其他端口\n"
-            "\n"
-            "### 📂 输出说明\n"
-            "\n"
-            "- 合成音频保存于 `outputs/` 目录\n"
-            "- 可通过环境变量 `AUDIOCLONE_OUTPUT_KEEP_MAX` 设置保留文件数上限（`>0` 自动清理旧输出，`0` 不清理）\n"
+    # ── 多任务实验台 ───────────────────────────────────────
+    async def on_t2a() -> None:
+        w = mt.widgets
+        out = await widgets.run_guarded(
+            w["t2a_generate"],
+            lambda: _infer(mt_handlers["t2a"], w["t2a_text"].value, w["t2a_duration"].value),
         )
+        if out:
+            sample_rate, audio = out
+            w["t2a_result"].show(audio, sample_rate, prefix="t2a")
 
-    return demo
+    async def on_a2a() -> None:
+        w = mt.widgets
+        out = await widgets.run_guarded(
+            w["a2a_generate"],
+            lambda: _infer(mt_handlers["a2a"], w["a2a_audio"].value, w["a2a_instruct"].value),
+        )
+        if out:
+            sample_rate, audio = out
+            w["a2a_result"].show(audio, sample_rate, prefix="a2a")
+
+    async def on_classify() -> None:
+        w = mt.widgets
+        out = await widgets.run_guarded(
+            w["cls_generate"], lambda: _infer(mt_handlers["classify"], w["cls_audio"].value)
+        )
+        if out:
+            w["cls_result"].show(out, note="按置信度降序")
+
+    async def on_vad() -> None:
+        w = mt.widgets
+        out = await widgets.run_guarded(
+            w["vad_generate"], lambda: _infer(mt_handlers["vad"], w["vad_audio"].value)
+        )
+        if out:
+            w["vad_result"].show(out, note="检测到的语音片段")
+
+    mt["t2a_generate"].on_click(on_t2a)
+    mt["a2a_generate"].on_click(on_a2a)
+    mt["cls_generate"].on_click(on_classify)
+    mt["vad_generate"].on_click(on_vad)
+
+
+# ─────────────────────────────────────────────────────────────
+# 装配入口
+# ─────────────────────────────────────────────────────────────
+def build_pages() -> None:
+    """注册页面路由（后端加载完成后调用一次）。"""
+    theme.apply_theme()
+    widgets.register_global_widgets()
+    app.on_shutdown(media.cleanup)
+
+    @ui.page("/")
+    def index() -> None:
+        _build_index()
 
 
 def main() -> None:
     configure_logging(json=LOG_JSON)
     parser = argparse.ArgumentParser(description="AudioCloning WebUI", prog="audioclone-webui")
-    parser.add_argument("--port", type=int, default=GRADIO_PORT)
-    parser.add_argument("--host", type=str, default=GRADIO_HOST)
+    parser.add_argument("--port", type=int, default=WEBUI_PORT)
+    parser.add_argument("--host", type=str, default=WEBUI_HOST)
     parser.add_argument("--model_dir", type=str, default=None, help="TTS 模型目录路径")
     parser.add_argument("--asr_model_dir", type=str, default=None, help="ASR 模型目录路径")
     parser.add_argument("--tts-backend", type=str, default=None, help="TTS 后端名称")
     parser.add_argument("--asr-backend", type=str, default=None, help="ASR 后端名称")
     parser.add_argument("--no_asr", action="store_true", help="禁用 ASR 功能")
+    parser.add_argument(
+        "--theme", choices=("dark", "light"), default="dark", help="界面配色（默认 dark）"
+    )
+    parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
     args = parser.parse_args()
 
     logger.info("=" * 60)
@@ -267,9 +393,18 @@ def main() -> None:
         if args.model_dir is not None:
             tts_opts["model_dir"] = args.model_dir  # 显式传入时才覆盖，兼容 dummy 等后端
         tts_backend = create_tts_backend(**tts_opts)
-        logger.info("正在加载 TTS 后端: %s (能力: %s)...", tts_backend.name, ", ".join(list_backend_capabilities(tts_backend)))
+        logger.info(
+            "正在加载 TTS 后端: %s (能力: %s)...",
+            tts_backend.name,
+            ", ".join(list_backend_capabilities(tts_backend)),
+        )
         load_start = time.time()
-        tts_backend.load()
+        try:
+            tts_backend.load()
+        except ModelLoadError as e:
+            # 依赖缺失 / 模型缺失等可预期失败：给出可读原因而非原始堆栈
+            logger.error("TTS 后端 %s 加载失败: %s", tts_backend.name, e)
+            raise SystemExit(1) from None
         tts_load_sec = time.time() - load_start
         engine = TTSService(cast(TextToSpeechCapability, tts_backend))
         logger.info("TTS 服务就绪 (采样率 %s, 加载耗时 %.1fs)", engine.sample_rate, tts_load_sec)
@@ -295,14 +430,35 @@ def main() -> None:
         else:
             logger.info("ASR 功能已禁用 (--no_asr)")
 
-        # 构建 UI
-        demo = build_ui(engine, asr_engine, tts_load_sec=tts_load_sec)
-        demo.queue(max_size=GRADIO_MAX_QUEUE, default_concurrency_limit=GRADIO_CONCURRENCY)
+        app.state.engine = engine
+        app.state.asr_engine = asr_engine
+        app.state.backend = cast(ModelBackend, engine.backend)
+        app.state.webui_dark = args.theme == "dark"
+        app.state.webui_status = SystemStatus(
+            version=__version__,
+            tts_backend=tts_backend.name,
+            tts_model=_tts_model_label(tts_backend),
+            tts_ready=True,
+            tts_modes=tuple(getattr(tts_backend, "supported_modes", ()) or ()),
+            asr_backend=asr_backend.name,
+            asr_ready=asr_engine.is_ready(),
+            sample_rate=engine.sample_rate,
+            load_sec=tts_load_sec,
+            webui_url=f"http://localhost:{args.port}",
+            api_url="http://localhost:8000",
+            capabilities=tuple(list_backend_capabilities(tts_backend)),
+        )
 
-        demo.launch(
-            server_name=args.host,
-            server_port=args.port,
-            theme=gr.themes.Soft(),
+        build_pages()
+        logger.info("WebUI 启动中: http://%s:%s", args.host, args.port)
+        ui.run(
+            host=args.host,
+            port=args.port,
+            title=f"AudioCloning · 音频模型体验工具箱 v{__version__}",
+            dark=args.theme == "dark",
+            show=not args.no_browser,
+            reload=False,
+            uvicorn_logging_level="warning",
         )
     finally:
         # 统一释放全部后端资源

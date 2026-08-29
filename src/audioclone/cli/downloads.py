@@ -36,23 +36,29 @@ def download_modelscope(model_id: str, local_dir: Path) -> None:
     logger.info("下载完成: %s", local_dir)
 
 
-def download_tts(local_dir: str | None = None) -> None:
-    """下载当前默认 TTS 后端所需的模型。"""
-    model_id = _backend_model_id(TTS_BACKENDS, TTS_BACKEND)
+def download_tts(local_dir: str | None = None, backend: str | None = None) -> None:
+    """下载指定（或默认）TTS 后端所需的模型。"""
+    name = backend or TTS_BACKEND
+    if name not in TTS_BACKENDS:
+        raise KeyError(f"未知的 TTS 后端: {name}（可用: {', '.join(TTS_BACKENDS)}）")
+    model_id = _backend_model_id(TTS_BACKENDS, name)
     if not model_id:
-        logger.info("当前 TTS 后端 (%s) 无需下载模型", TTS_BACKEND)
+        logger.info("TTS 后端 (%s) 无需下载模型", name)
         return
 
-    actual = Path(local_dir) if local_dir else _tts_default_dir()
+    actual = Path(local_dir) if local_dir else _tts_default_dir(name)
     actual.mkdir(parents=True, exist_ok=True)
     download_modelscope(model_id, actual)
 
 
-def download_asr(local_dir: str | None = None) -> None:
-    """下载当前默认 ASR 后端所需的模型，并列出下载到的文件。"""
-    model_id = _backend_model_id(ASR_BACKENDS, ASR_BACKEND)
+def download_asr(local_dir: str | None = None, backend: str | None = None) -> None:
+    """下载指定（或默认）ASR 后端所需的模型，并列出下载到的文件。"""
+    name = backend or ASR_BACKEND
+    if name not in ASR_BACKENDS:
+        raise KeyError(f"未知的 ASR 后端: {name}（可用: {', '.join(ASR_BACKENDS)}）")
+    model_id = _backend_model_id(ASR_BACKENDS, name)
     if not model_id:
-        logger.info("当前 ASR 后端 (%s) 无需下载模型", ASR_BACKEND)
+        logger.info("ASR 后端 (%s) 无需下载模型", name)
         return
 
     target = Path(local_dir) if local_dir else ASR_MODEL_DIR
@@ -68,11 +74,11 @@ def download_asr(local_dir: str | None = None) -> None:
         logger.warning("未找到 .gguf 文件，请检查下载是否完整")
 
 
-def _tts_default_dir() -> Path:
-    """从默认 TTS 后端配置取模型目录。"""
+def _tts_default_dir(backend: str | None = None) -> Path:
+    """从 TTS 后端配置取模型目录（默认取全局默认后端）。"""
     from audioclone.config import MODEL_DIR
 
-    entry = TTS_BACKENDS.get(TTS_BACKEND, {})
+    entry = TTS_BACKENDS.get(backend or TTS_BACKEND, {})
     model_dir = entry.get("model_dir")
     return Path(model_dir) if isinstance(model_dir, str) else MODEL_DIR
 
@@ -80,10 +86,13 @@ def _tts_default_dir() -> Path:
 def _run_download(name: str, func, default_dir: Path) -> None:
     parser = argparse.ArgumentParser(prog=name)
     parser.add_argument("--local_dir", type=str, default=str(default_dir), help="本地保存目录")
+    parser.add_argument(
+        "--backend", type=str, default=None, help="后端名称（默认取当前配置的默认后端）"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    func(args.local_dir)
+    func(args.local_dir, args.backend)
 
 
 def download_tts_main() -> None:

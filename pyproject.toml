@@ -9,12 +9,12 @@ license = "MIT"
 authors = [
     { name = "AudioCloning" },
 ]
-keywords = ["mlx", "tts", "asr", "voice-cloning", "cosyvoice", "gradio", "fastapi"]
+keywords = ["mlx", "tts", "asr", "voice-cloning", "cosyvoice", "nicegui", "fastapi"]
 dependencies = [
     "mlx-audio-plus>=0.1.7",
     "mlx-lm>=0.18,<0.30",
     "modelscope>=1.20.0",
-    "gradio>=5.4.0",
+    "nicegui>=3.16.0",
     "soundfile>=0.12.1",
     "numpy>=1.26",
     "scipy>=1.11.0",
@@ -67,8 +67,13 @@ addopts = "-ra"
 # 覆盖率目标
 [tool.coverage.run]
 source = ["audioclone"]
-# 仅 UI 布局（app/components）无法单测，其余源码全部纳入统计
-omit = ["src/audioclone/webui/app.py", "src/audioclone/webui/components.py"]
+# 纯界面装配与样式（app/components/theme/widgets）不纳入覆盖率，其余源码全部统计
+omit = [
+    "src/audioclone/webui/app.py",
+    "src/audioclone/webui/components.py",
+    "src/audioclone/webui/theme.py",
+    "src/audioclone/webui/widgets.py",
+]
 
 [tool.coverage.report]
 fail_under = 60

@@ -24,7 +24,7 @@ from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-# 本地回环不受系统代理影响（在 httpx/gradio 等网络库导入前设置）
+# 本地回环不受系统代理影响（在 httpx 等网络库导入前设置）
 os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
@@ -39,9 +39,14 @@ from audioclone.config import (
     MODEL_ID,
     OUTPUT_DIR,
 )
-from audioclone.core import TTSService, create_tts_backend
+from audioclone.core import TTSService, create_tts_backend, model_slots
 from audioclone.core.capabilities import TextToSpeechCapability
-from audioclone.core.exceptions import BackendUnavailable, InvalidAudioInput, ModelLoadError
+from audioclone.core.exceptions import (
+    BackendUnavailable,
+    InvalidAudioInput,
+    ModelLoadError,
+    ModelSlotError,
+)
 from audioclone.utils.audio import assert_valid_ref_audio, get_audio_duration
 from audioclone.utils.logging_utils import configure_logging, set_trace_id
 from audioclone.utils.validation import assert_tts_text, assert_valid_mode
@@ -139,6 +144,12 @@ async def _backend_unavailable_handler(request: Request, exc: BackendUnavailable
     return await _json_error(503, str(exc))
 
 
+@app.exception_handler(ModelSlotError)
+async def _model_slot_handler(request: Request, exc: ModelSlotError):
+    """槽位冲突（试图加载第二个同类模型）→ 409。"""
+    return await _json_error(409, str(exc))
+
+
 async def _json_error(status: int, detail: str):
     return JSONResponse(status_code=status, content=jsonable_encoder({"detail": detail}))
 
@@ -153,6 +164,8 @@ async def health(request: Request) -> dict[str, Any]:
         "model": MODEL_ID,
         "sample_rate": engine.sample_rate if engine else None,
         "model_loaded": engine is not None,
+        # 槽位占用情况：保证运行时每种任务只有一个已加载模型
+        "model_slots": model_slots.snapshot(),
     }
 
 

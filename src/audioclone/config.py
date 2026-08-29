@@ -23,6 +23,16 @@ MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Fun-CosyVoice3-0.5B-2512-fp16"
 ASR_MODEL_ID = "ggml-org/Qwen3-ASR-0.6B-GGUF"
 ASR_MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Qwen3-ASR-0.6B-GGUF"
 
+# Qwen3-TTS（MLX）三个变体：base=参考音频克隆 / custom_voice=预设音色+情绪指令 / voice_design=描述造音色
+QWEN3_TTS_MODEL_IDS: dict[str, str] = {
+    "base": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+    "custom_voice": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+    "voice_design": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit",
+}
+# 目录名用下划线连写（qwen3_tts_<变体>）：mlx_audio 会按 "-" 切分目录名猜测架构，
+# 若出现 "qwen3"/"base" 等片段会被误判为其他模型（详见 backends/qwen3_tts_mlx.py）。
+QWEN3_TTS_MODEL_DIR = PROJECT_ROOT / "pretrained_models"
+
 # 输出 / 日志目录
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -60,11 +70,10 @@ class Settings(BaseSettings):
     ref_audio_min_sr: int = 8000           # 参考音频最低采样率(Hz)
     max_text_length: int = 300             # 单次合成最大字符数
 
-    # ── WebUI ──────────────────────────────────────────────
-    gradio_port: int = 7860
-    gradio_host: str = "127.0.0.1"         # 默认仅本机访问（部署护栏）
-    gradio_max_queue: int = 4
-    gradio_concurrency: int = 2
+    # ── WebUI (NiceGUI) ────────────────────────────────────
+    webui_port: int = 7860
+    webui_host: str = "127.0.0.1"          # 默认仅本机访问（部署护栏）
+    webui_concurrency: int = 2             # 同时执行的推理任务数（保护非线程安全模型）
 
     # ── ASR ────────────────────────────────────────────────
     asr_server_host: str = "127.0.0.1"
@@ -103,10 +112,9 @@ REF_AUDIO_MIN_SEC = settings.ref_audio_min_sec
 REF_AUDIO_MIN_SR = settings.ref_audio_min_sr
 MAX_TEXT_LENGTH = settings.max_text_length
 
-GRADIO_PORT = settings.gradio_port
-GRADIO_HOST = settings.gradio_host
-GRADIO_MAX_QUEUE = settings.gradio_max_queue
-GRADIO_CONCURRENCY = settings.gradio_concurrency
+WEBUI_PORT = settings.webui_port
+WEBUI_HOST = settings.webui_host
+WEBUI_CONCURRENCY = settings.webui_concurrency
 
 ASR_SERVER_HOST = settings.asr_server_host
 ASR_SERVER_PORT = settings.asr_server_port
@@ -147,6 +155,18 @@ TTS_BACKENDS: dict[str, dict[str, Any]] = {
     },
     "dummy-omni": {
         "sample_rate": settings.sample_rate,
+    },
+    "qwen3-tts-base-mlx": {
+        "model_id": QWEN3_TTS_MODEL_IDS["base"],
+        "model_dir": str(QWEN3_TTS_MODEL_DIR / "qwen3_tts_base"),
+    },
+    "qwen3-tts-customvoice-mlx": {
+        "model_id": QWEN3_TTS_MODEL_IDS["custom_voice"],
+        "model_dir": str(QWEN3_TTS_MODEL_DIR / "qwen3_tts_custom_voice"),
+    },
+    "qwen3-tts-voicedesign-mlx": {
+        "model_id": QWEN3_TTS_MODEL_IDS["voice_design"],
+        "model_dir": str(QWEN3_TTS_MODEL_DIR / "qwen3_tts_voice_design"),
     },
 }
 

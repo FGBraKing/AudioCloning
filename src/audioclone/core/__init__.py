@@ -16,6 +16,8 @@ from audioclone.core.capabilities import (
     TextToSpeechCapability,
     VoiceActivityCapability,
 )
+from audioclone.core.exceptions import ModelSlotError
+from audioclone.core.model_slot import ModelSlot, model_slots
 from audioclone.core.service.asr_service import ASRService
 from audioclone.core.service.audio_classification_service import AudioClassificationService
 from audioclone.core.service.audio_to_audio_service import AudioToAudioService
@@ -37,6 +39,8 @@ __all__ = [
     "AudioToAudioService",
     "Capability",
     "ModelBackend",
+    "ModelSlot",
+    "ModelSlotError",
     "SpeechRecognitionCapability",
     "TTS_MODES",
     "TTSService",
@@ -48,6 +52,7 @@ __all__ = [
     "create_asr_backend",
     "create_tts_backend",
     "list_backend_capabilities",
+    "model_slots",
     "normalize_text",
     "split_long_text",
 ]
