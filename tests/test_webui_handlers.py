@@ -6,9 +6,16 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from audioclone.core import ASRService, TTSService
+from audioclone.core import (
+    ASRService,
+    AudioClassificationService,
+    AudioToAudioService,
+    TextToAudioService,
+    TTSService,
+    VoiceActivityService,
+)
 from audioclone.core.backends.dummy import DummyASRBackend, DummyOmnibackend, DummyTTSBackend
-from audioclone.core.exceptions import AudioError
+from audioclone.core.exceptions import AudioError, CapabilityError
 from audioclone.webui.errors import UIError
 from audioclone.webui.handlers import (
     make_asr_handler,
@@ -142,8 +149,18 @@ def test_asr_handler_bad_format(tmp_path):
 
 
 # ─── 多任务实验台（dummy-omni 全能力） ──────────────────────
+def _omni_services() -> dict:
+    omni = DummyOmnibackend(sample_rate=24000)
+    return {
+        "t2a": TextToAudioService(omni),
+        "a2a": AudioToAudioService(omni),
+        "classification": AudioClassificationService(omni),
+        "vad": VoiceActivityService(omni),
+    }
+
+
 def test_multitask_omnibackend_all(tmp_path):
-    handlers = make_multitask_handlers(DummyOmnibackend(sample_rate=24000))
+    handlers = make_multitask_handlers(_omni_services())
     wav = _make_wav(tmp_path / "in.wav")
 
     sr, audio = handlers["t2a"]("雷雨声", 0.2)
@@ -160,20 +177,81 @@ def test_multitask_omnibackend_all(tmp_path):
 
 
 def test_multitask_guard_incapable_backend():
-    handlers = make_multitask_handlers(DummyTTSBackend(sample_rate=24000))  # 仅 TTS
-    with pytest.raises(UIError) as ei:
-        handlers["t2a"]("雷雨声", 0.2)
-    assert "不支持" in str(ei.value)
-    with pytest.raises(UIError) as ei:
-        handlers["classify"]("whatever.wav")
-    assert "不支持" in str(ei.value)
+    """各任务专属服务在构造期校验能力：不支持的组合直接抛领域异常。"""
+    tts_only = DummyTTSBackend(sample_rate=24000)  # 仅 TTS 能力
+    with pytest.raises(CapabilityError):
+        TextToAudioService(tts_only)
+    with pytest.raises(CapabilityError):
+        AudioClassificationService(tts_only)
 
 
 def test_multitask_accepts_long_audio(tmp_path):
     """多任务时长口径独立于 TTS（>30s 但 <300s 应通过）。"""
-    handlers = make_multitask_handlers(DummyOmnibackend(sample_rate=24000))
+    handlers = make_multitask_handlers(_omni_services())
     long_wav = _make_wav(tmp_path / "long.wav", seconds=40)  # >30s，<300s
     _, audio = handlers["a2a"](long_wav, "变男声")
     assert len(audio) > 0
     labels = handlers["classify"](long_wav)
     assert "speech" in labels
+
+
+def test_plain_handler_synthesizes(tmp_path):
+    from audioclone.core import TTSService
+    from audioclone.core.backends.dummy import DummyTTSBackend
+    from audioclone.webui.handlers import make_plain_handler
+
+    engine = TTSService(DummyTTSBackend(sample_rate=24000))
+    handler = make_plain_handler(engine)
+    sr, audio = handler("你好，纯文本合成。", 1.0)
+    assert sr == 24000 and len(audio) > 0
+
+
+def test_plain_handler_empty_text():
+    from audioclone.core import TTSService
+    from audioclone.core.backends.dummy import DummyTTSBackend
+    from audioclone.webui.errors import UIError
+    from audioclone.webui.handlers import make_plain_handler
+
+    engine = TTSService(DummyTTSBackend(sample_rate=24000))
+    handler = make_plain_handler(engine)
+    with pytest.raises(UIError):
+        handler("   ", 1.0)
+
+
+# ─── 模型下载 handler ────────────────────────────────────────
+def test_download_handler_success(monkeypatch):
+    from audioclone.core import model_manager
+    from audioclone.webui.handlers import make_download_handler
+
+    monkeypatch.setattr(
+        model_manager, "download_model",
+        lambda task: {"status": "completed", "source": "hf", "fallback": False,
+                      "path": "/cache/model"},
+    )
+    msg = make_download_handler("asr")()
+    assert "hf" in msg and "/cache/model" in msg
+
+
+def test_download_handler_skipped(monkeypatch):
+    from audioclone.core import model_manager
+    from audioclone.webui.handlers import make_download_handler
+
+    monkeypatch.setattr(
+        model_manager, "download_model",
+        lambda task: {"status": "skipped", "source": "hf", "fallback": False, "path": None},
+    )
+    assert "无需下载" in make_download_handler("tts")()
+
+
+def test_download_handler_failure_raises_ui_error(monkeypatch):
+    from audioclone.core import model_manager
+    from audioclone.webui.errors import UIError
+    from audioclone.webui.handlers import make_download_handler
+
+    def boom(task):
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(model_manager, "download_model", boom)
+    with pytest.raises(UIError) as ei:
+        make_download_handler("asr")()
+    assert "network down" in str(ei.value)

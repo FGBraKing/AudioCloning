@@ -9,7 +9,13 @@ import numpy as np
 from audioclone.core.capabilities.base import Capability
 
 # TTS 支持的推理模式
-TTS_MODES: tuple[str, ...] = ("zero_shot", "cross_lingual", "instruct")
+TTS_MODES: tuple[str, ...] = ("zero_shot", "cross_lingual", "instruct", "plain")
+"""推理模式全集。
+
+- ``zero_shot`` / ``cross_lingual``：参考音频克隆（需 ``ref_audio``）
+- ``instruct``：指令控制（需 ``instruct_text``；预设音色或自然语言造音色）
+- ``plain``：纯文本直读（无需参考音频/指令；sherpa-onnx Kokoro 等）
+"""
 
 
 class TextToSpeechCapability(Capability, ABC):

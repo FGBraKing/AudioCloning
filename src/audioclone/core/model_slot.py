@@ -29,6 +29,10 @@ class ModelSlot(StrEnum):
 
     TTS = "tts"
     ASR = "asr"
+    T2A = "t2a"                        # 文本转音频（音乐/音效生成）
+    A2A = "a2a"                        # 音频到音频（变声/增强）
+    CLASSIFICATION = "classification"  # 音频分类
+    VAD = "vad"                        # 语音活动检测
 
 
 class ModelSlotRegistry:

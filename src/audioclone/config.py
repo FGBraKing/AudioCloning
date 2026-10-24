@@ -17,9 +17,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # src/audioclone/config.py -> 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# 模型配置（MLX 格式）
-ASR_MODEL_ID = "ggml-org/Qwen3-ASR-0.6B-GGUF"
-ASR_MODEL_DIR = PROJECT_ROOT / "pretrained_models" / "Qwen3-ASR-0.6B-GGUF"
+# 模型配置（MLX / ONNX 格式）
+# 默认加载路径 = HuggingFace 系统缓存（~/.cache/huggingface/hub，由 huggingface_hub 管理，
+# 缺失时自动下载）；自定义路径经 Settings.model_dir（env/CLI）覆盖，见 utils/model_path.py。
+ASR_MLX_MODEL_ID = "mlx-community/Qwen3-ASR-0.6B-8bit"
 
 # Qwen3-TTS（MLX）三个变体：base=参考音频克隆 / custom_voice=预设音色+情绪指令 / voice_design=描述造音色
 QWEN3_TTS_MODEL_IDS: dict[str, str] = {
@@ -27,9 +28,6 @@ QWEN3_TTS_MODEL_IDS: dict[str, str] = {
     "custom_voice": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
     "voice_design": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit",
 }
-# 目录名用下划线连写（qwen3_tts_<变体>）：mlx_audio 会按 "-" 切分目录名猜测架构，
-# 若出现 "qwen3"/"base" 等片段会被误判为其他模型（详见 backends/qwen3_tts_mlx.py）。
-QWEN3_TTS_MODEL_DIR = PROJECT_ROOT / "pretrained_models"
 
 # 输出 / 日志目录
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
@@ -57,9 +55,25 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AUDIOCLONE_", env_file=".env", extra="ignore")
 
-    # ── 默认后端 ───────────────────────────────────────────
-    tts_backend: str = "qwen3-tts-base-mlx"
-    asr_backend: str = "qwen3-asr-llama"
+    # ── 默认后端（"auto" = 按硬件/系统自动选择推理框架，见 core/runtime.py） ──
+    tts_backend: str = "auto"
+    asr_backend: str = "auto"
+
+    # ── 模型路径（None = HuggingFace 系统缓存 ~/.cache/huggingface/hub） ──
+    tts_model_dir: str | None = None       # 自定义 TTS 模型目录（含权重文件的本地路径）
+    asr_model_dir: str | None = None       # 自定义 ASR 模型目录（含 .gguf 的本地路径）
+    t2a_model_dir: str | None = None       # 自定义 T2A（音乐生成）模型目录
+    a2a_model_dir: str | None = None       # 自定义 A2A（语音增强）模型目录
+    vad_model_dir: str | None = None       # 自定义 VAD 模型目录
+    classification_model_dir: str | None = None  # 自定义分类模型目录
+    tensorrt_engine_dir: str | None = None  # TensorRT Edge-LLM 引擎目录（qwen3-tts-*-tensorrt 专用）
+
+    # ── 推理框架选择阈值（core/runtime.py 显存/内存不足时降级 onnx） ──
+    min_mlx_mem_gb: float = 8.0            # Apple Silicon 统一内存最低要求（GB）
+    min_cuda_vram_gb: float = 8.0          # NVIDIA 可用显存最低要求（GB，多卡取可用最大的一张）
+
+    # ── 模型下载源（默认 HF，失败自动回退 ModelScope） ──────────
+    hf_endpoint: str | None = None         # 自定义 HuggingFace 镜像端点（如 https://hf-mirror.com）
 
     # ── 音频（TTS 输出 / 参考音频校验） ─────────────────────
     sample_rate: int = 24000               # TTS 输出采样率
@@ -73,18 +87,11 @@ class Settings(BaseSettings):
     webui_host: str = "127.0.0.1"          # 默认仅本机访问（部署护栏）
     webui_concurrency: int = 2             # 同时执行的推理任务数（保护非线程安全模型）
 
-    # ── ASR ────────────────────────────────────────────────
-    asr_server_host: str = "127.0.0.1"
-    asr_server_port: int = 8090
-    asr_ctx_size: int = 4096
-    asr_n_gpu_layers: int = 99             # Metal 全量 offload
+    # ── ASR（通用校验项；各后端自身参数见后端实现） ──────────
     asr_audio_max_sec: int = 300           # 最大音频时长（秒）
     asr_supported_formats: list[str] = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
-    asr_sample_rate: int = 16000           # Qwen3-ASR 要求的输入采样率
-    asr_http_timeout: float = 120.0        # 识别 HTTP 超时（秒）
-    asr_ready_timeout: float = 60.0        # llama-server 就绪等待超时（秒）
-    asr_max_segment_sec: float = 60.0      # ASR 长音频分片阈值（秒）
-    asr_chunk_overlap_sec: float = 1.0     # ASR 分片间重叠（秒），避免切词
+    asr_sample_rate: int = 16000           # 输入采样率（MLX/onnx 后端一致）
+    asr_num_threads: int = 2               # onnxruntime 推理线程数（sherpa-onnx）
 
     # ── 上传 / 资源限流 ────────────────────────────────────
     max_upload_bytes: int = 100 * 1024 * 1024   # 上传音频最大字节数
@@ -114,24 +121,17 @@ WEBUI_PORT = settings.webui_port
 WEBUI_HOST = settings.webui_host
 WEBUI_CONCURRENCY = settings.webui_concurrency
 
-ASR_SERVER_HOST = settings.asr_server_host
-ASR_SERVER_PORT = settings.asr_server_port
-ASR_CTX_SIZE = settings.asr_ctx_size
-ASR_N_GPU_LAYERS = settings.asr_n_gpu_layers
 ASR_AUDIO_MAX_SEC = settings.asr_audio_max_sec
 ASR_SUPPORTED_FORMATS = settings.asr_supported_formats
 ASR_SAMPLE_RATE = settings.asr_sample_rate
-ASR_HTTP_TIMEOUT = settings.asr_http_timeout
-ASR_READY_TIMEOUT = settings.asr_ready_timeout
-ASR_MAX_SEGMENT_SEC = settings.asr_max_segment_sec
-ASR_CHUNK_OVERLAP_SEC = settings.asr_chunk_overlap_sec
+ASR_NUM_THREADS = settings.asr_num_threads
 
 MAX_UPLOAD_BYTES = settings.max_upload_bytes
 MAX_INLINE_UPLOAD_BYTES = settings.max_inline_upload_bytes
 OUTPUT_KEEP_MAX = settings.output_keep_max
 
-TTS_BACKEND = settings.tts_backend
-ASR_BACKEND = settings.asr_backend
+TTS_MODEL_DIR = settings.tts_model_dir
+ASR_MODEL_DIR = settings.asr_model_dir
 
 TTS_NORMALIZE_LOUDNESS = settings.tts_normalize_loudness
 TTS_SEGMENT_GAP_SEC = settings.tts_segment_gap_sec
@@ -152,25 +152,104 @@ TTS_BACKENDS: dict[str, dict[str, Any]] = {
     },
     "qwen3-tts-base-mlx": {
         "model_id": QWEN3_TTS_MODEL_IDS["base"],
-        "model_dir": str(QWEN3_TTS_MODEL_DIR / "qwen3_tts_base"),
+        "model_dir": settings.tts_model_dir,   # None = HF 系统缓存
     },
     "qwen3-tts-customvoice-mlx": {
         "model_id": QWEN3_TTS_MODEL_IDS["custom_voice"],
-        "model_dir": str(QWEN3_TTS_MODEL_DIR / "qwen3_tts_custom_voice"),
+        "model_dir": settings.tts_model_dir,
     },
     "qwen3-tts-voicedesign-mlx": {
         "model_id": QWEN3_TTS_MODEL_IDS["voice_design"],
-        "model_dir": str(QWEN3_TTS_MODEL_DIR / "qwen3_tts_voice_design"),
+        "model_dir": settings.tts_model_dir,
+    },
+    "sherpa-tts-onnx": {
+        # sherpa-onnx 官方 HF 镜像：Kokoro-82M int8 多语种（zh/en，82M 参数）
+        "model_id": "csukuangfj/kokoro-int8-multi-lang-v1_1",
+        "model_dir": settings.tts_model_dir,
+    },
+    # NVIDIA 平台：TensorRT Edge-LLM 官方 Qwen3-TTS 流水线（三变体同 MLX 侧）。
+    # model_dir 指 **Edge-LLM 构建产物目录**（TensorRT 引擎，env
+    # AUDIOCLONE_TENSORRT_ENGINE_DIR），权重由用户在 x86 主机自行导出构建，
+    # 本项目不下载；未提供时加载报可读指引。
+    "qwen3-tts-base-tensorrt": {
+        "model_id": QWEN3_TTS_MODEL_IDS["base"],
+        "model_dir": settings.tensorrt_engine_dir,
+    },
+    "qwen3-tts-customvoice-tensorrt": {
+        "model_id": QWEN3_TTS_MODEL_IDS["custom_voice"],
+        "model_dir": settings.tensorrt_engine_dir,
+    },
+    "qwen3-tts-voicedesign-tensorrt": {
+        "model_id": QWEN3_TTS_MODEL_IDS["voice_design"],
+        "model_dir": settings.tensorrt_engine_dir,
     },
 }
 
 ASR_BACKENDS: dict[str, dict[str, Any]] = {
-    "qwen3-asr-llama": {
-        "model_id": ASR_MODEL_ID,
-        "model_dir": str(ASR_MODEL_DIR),
+    "qwen3-asr-mlx": {
+        "model_id": ASR_MLX_MODEL_ID,
+        "model_dir": settings.asr_model_dir,   # None = HF 系统缓存（mac 默认后端）
+    },
+    "sherpa-asr-onnx": {
+        # sherpa-onnx 官方 HF 镜像：SenseVoice int8（zh/en/ja/ko/yue）
+        "model_id": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "model_dir": settings.asr_model_dir,
     },
     "dummy": {
         "sample_rate": settings.sample_rate,
+    },
+    "dummy-omni": {
+        "sample_rate": settings.sample_rate,
+    },
+}
+
+# ─── 其余任务后端（v0.3.0：T2A / A2A / 分类 / VAD） ──────────
+# 模型选型原则：默认模型仅选 **8bit 量化（或非 LLM 极小模型）、较新较强**的小模型，
+# 参数量以 ≤3B 为基线（T2A 音乐经用户决策放宽）；优先 mlx_audio 源码内置仓库或
+# 已确认存在的 mlx-community 仓库，不引入 torch 等重依赖；**默认不下载权重**（首启提示 + 主动下载接口）。
+#
+# A2A 变声无 MLX 原生模型（DeepFilterNet 为增强；VoiceDesign 可经 TTS 变通）。
+T2A_BACKENDS: dict[str, dict[str, Any]] = {
+    # 放宽参数量上限的例外：mlx-community 唯一有 8bit 量化版的音乐生成模型（基座 11.7B）
+    "minimax-music-mlx": {
+        "model_id": "mlx-community/MiniMax-Music3-8bit",
+        "model_dir": settings.t2a_model_dir,
+    },
+    "dummy-omni": {
+        "sample_rate": settings.sample_rate,
+    },
+}
+
+A2A_BACKENDS: dict[str, dict[str, Any]] = {
+    "deepfilternet-mlx": {
+        "model_id": "mlx-community/DeepFilterNet-mlx",   # mlx_audio 源码内置仓库 ID
+        "model_dir": settings.a2a_model_dir,
+    },
+    "dummy-omni": {
+        "sample_rate": settings.sample_rate,
+    },
+}
+
+CLASSIFICATION_BACKENDS: dict[str, dict[str, Any]] = {
+    # 情感分类即可满足需求（用户决策）：SenseVoice 内建情感+事件分类头，不引入 torch
+    "sensevoice-mlx": {
+        "model_id": "mlx-community/SenseVoiceSmall",
+        "model_dir": settings.classification_model_dir,
+    },
+    "dummy-omni": {
+        "sample_rate": settings.sample_rate,
+    },
+}
+
+VAD_BACKENDS: dict[str, dict[str, Any]] = {
+    "silero-vad-mlx": {
+        "model_id": "mlx-community/silero-vad-v6",   # 已确认存在，MIT，约 2MB
+        "model_dir": settings.vad_model_dir,
+    },
+    "sherpa-vad-onnx": {
+        # onnx-community 官方转换（47 赞；sherpa-onnx VAD 原生消费 silero onnx）
+        "model_id": "onnx-community/silero-vad",
+        "model_dir": settings.vad_model_dir,
     },
     "dummy-omni": {
         "sample_rate": settings.sample_rate,

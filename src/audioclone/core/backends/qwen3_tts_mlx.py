@@ -36,6 +36,7 @@ from audioclone.config import SAMPLE_RATE
 from audioclone.core.capabilities import ModelBackend, TextToSpeechCapability
 from audioclone.core.exceptions import InvalidAudioInput, ModelLoadError
 from audioclone.core.model_slot import ModelSlot
+from audioclone.utils.model_path import resolve_model_dir
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ class Qwen3TTSMLXBackend(ModelBackend, TextToSpeechCapability):
 
     #: 模型变体（base / custom_voice / voice_design），由子类声明
     variant: str = ""
+    #: 对应的 HuggingFace 仓库（子类声明；config 覆盖参数可另行指定 model_id）
+    default_model_id: str = ""
     capabilities = (TextToSpeechCapability,)
     slot = ModelSlot.TTS
 
@@ -76,12 +79,10 @@ class Qwen3TTSMLXBackend(ModelBackend, TextToSpeechCapability):
         speaker: str = "Vivian",
         language: str = "auto",
     ) -> None:
-        from audioclone.config import QWEN3_TTS_MODEL_DIR
-
-        self.model_id = model_id or ""
-        # 目录名连写为 qwen3_tts_<变体>：避免被 mlx_audio 按 "-" 切分后误判架构
-        default_dir = QWEN3_TTS_MODEL_DIR / f"{ARCH}_{self.variant}"
-        self.model_dir = Path(model_dir) if model_dir else default_dir
+        self.model_id = model_id or self.default_model_id
+        # None = HuggingFace 系统缓存（加载时按 model_id 解析，缺失自动下载）；
+        # 显式路径优先（CLI --model_dir / env AUDIOCLONE_TTS_MODEL_DIR / 构造参数）
+        self.model_dir = Path(model_dir).expanduser() if model_dir else None
         self.speaker = speaker          # custom_voice：预设音色名
         self.language = language        # 语言代码（auto / Chinese / English ...）
         self._model: Any = None
@@ -96,12 +97,15 @@ class Qwen3TTSMLXBackend(ModelBackend, TextToSpeechCapability):
 
         from mlx_audio.tts.utils import load_model as mlx_load_model
 
-        logger.info("[TTS] 加载 Qwen3-TTS (%s): %s", self.variant, self.model_dir)
-        self._model = self._load_model(mlx_load_model)
+        # 目录名连写为 qwen3_tts_<变体> 的历史约束已随 HF 缓存默认路径解除：
+        # 加载器显式锁定 qwen3_tts 架构，不再依赖目录名推断
+        model_path = resolve_model_dir(self.model_id, self.model_dir)
+        logger.info("[TTS] 加载 Qwen3-TTS (%s): %s", self.variant, model_path)
+        self._model = self._load_model(mlx_load_model, model_path)
         self.sample_rate = int(getattr(self._model, "sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
         logger.info("[TTS] Qwen3-TTS %s 加载完成，采样率: %s", self.variant, self.sample_rate)
 
-    def _load_model(self, loader: Any) -> Any:
+    def _load_model(self, loader: Any, model_path: Path) -> Any:
         """调用 ``mlx_audio`` 加载器，并显式锁定架构。
 
         ``mlx_audio`` 默认会按**目录名片段**猜测架构，而 ``Qwen3-TTS-...`` 会被切成
@@ -110,14 +114,14 @@ class Qwen3TTSMLXBackend(ModelBackend, TextToSpeechCapability):
         锁定 ``qwen3_tts``；旧版加载器不支持这些关键字时回退为默认推断。
         """
         try:
-            return loader(self.model_dir, model_type=ARCH, model_name_parts=[ARCH])
+            return loader(model_path, model_type=ARCH, model_name_parts=[ARCH])
         except TypeError:
             logger.warning(
                 "[TTS] 当前 mlx_audio 不支持显式 model_type，回退为按目录名推断架构；"
                 "若加载报维度/权重不匹配，请将模型目录重命名为以 '%s' 开头的名称",
                 ARCH,
             )
-            return loader(self.model_dir)
+            return loader(model_path)
 
     def _close(self) -> None:
         self._model = None
@@ -183,6 +187,7 @@ class Qwen3TTSBaseMLXBackend(Qwen3TTSMLXBackend):
 
     name = "qwen3-tts-base-mlx"
     variant = "base"
+    default_model_id = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
     supported_modes = ("zero_shot", "cross_lingual")
 
 
@@ -191,6 +196,7 @@ class Qwen3TTSCustomVoiceMLXBackend(Qwen3TTSMLXBackend):
 
     name = "qwen3-tts-customvoice-mlx"
     variant = "custom_voice"
+    default_model_id = "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
     supported_modes = ("instruct",)
 
     def _synth_instruct(self, text: str, instruct_text: str) -> Any:
@@ -210,6 +216,7 @@ class Qwen3TTSVoiceDesignMLXBackend(Qwen3TTSMLXBackend):
 
     name = "qwen3-tts-voicedesign-mlx"
     variant = "voice_design"
+    default_model_id = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit"
     supported_modes = ("instruct",)
 
     def _synth_instruct(self, text: str, instruct_text: str) -> Any:

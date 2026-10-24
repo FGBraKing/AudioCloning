@@ -3,9 +3,9 @@
 | 元信息 | 值 |
 |--------|----|
 | 文档版本 | 1.5 |
-| **适用版本** | **v0.2.6** |
+| **适用版本** | **v0.3.0** |
 | 文档类型 | 使用说明（安装 / 配置 / 能力使用 / API / 扩展 / 故障排查 / 部署） |
-| 创建日期 | 2026-08-25（v0.2.6 修订 2026-08-26） |
+| 创建日期 | 2026-08-25（v0.2.6 修订 2026-08-26；v0.3.0 修订 2026-10-25） |
 | 配套文档 | `QUALITY-REPORT.md`、`REFACTOR-001-audio-toolbox.md`、`README.md` |
 
 ---
@@ -14,7 +14,7 @@
 
 一个**能力驱动、模型可替换**的本地音频模型体验工具箱（Apple Silicon + MLX）。
 框架提供 6 种音频任务能力：**TTS / Text-to-Audio / ASR / Audio-to-Audio / 音频分类 / VAD**，
-每种能力都有独立服务层（Service），按能力校验后端。内置真实后端（Qwen3-TTS-MLX 三变体、Qwen3-ASR-llama.cpp）
+每种能力都有独立服务层（Service），按能力校验后端。内置真实后端（Qwen3-TTS-MLX 三变体、Qwen3-ASR/SenseVoice/Kokoro/Silero 的 MLX 与 sherpa-onnx 实现）
 与全能力演示后端（dummy-omni）。
 
 ```
@@ -34,11 +34,10 @@ v0.2.3（本版文档）相比 v0.2.2 的修订（按 `QUALITY-REPORT.md` §9）
 
 ## 2. 系统要求
 
-- Apple Silicon Mac（M1/M2/M3/M4）、macOS 13+
-- Python 3.13（由 uv 管理，`.python-version` 固定）
-- [uv](https://docs.astral.sh/uv/)
-- [llama.cpp](https://github.com/ggerganov/llama.cpp)（仅 ASR 需要；`brew install llama.cpp`）
-- 可选真实模型：Qwen3-TTS MLX（三变体）、Qwen3-ASR GGUF（下载见 §6）
+- **macOS** (Apple Silicon)：推理框架 MLX
+- **Linux / Windows**：推理框架 onnx（sherpa-onnx，可选组 `uv sync --extra onnx`）；NVIDIA GPU 平台 TTS 走 TensorRT Edge-LLM（引擎需自行构建）
+- Python 3.13（由 uv 管理，`.python-version` 固定）+ [uv](https://docs.astral.sh/uv/)
+- 可选真实模型：Qwen3-TTS MLX（三变体）、Qwen3-ASR/Kokoro/Silero 的 MLX 或 onnx 版（下载见 §6）
 
 ---
 
@@ -52,8 +51,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 cd AudioCloning
 uv sync
 
-# 3) ASR 系统依赖
-brew install llama.cpp
+# 3) 可选：CPU / AMD GPU 平台的 sherpa-onnx 推理（ASR/TTS/VAD）
+uv sync --extra onnx
 ```
 
 ---
@@ -65,12 +64,11 @@ brew install llama.cpp
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `AUDIOCLONE_TTS_BACKEND` | `qwen3-tts-base-mlx` | 默认 TTS 后端 |
-| `AUDIOCLONE_ASR_BACKEND` | `qwen3-asr-llama` | 默认 ASR 后端 |
+| `AUDIOCLONE_ASR_BACKEND` | `auto` | 默认 ASR 后端 |
 | `AUDIOCLONE_SAMPLE_RATE` | `24000` | TTS 输出采样率 |
 | `AUDIOCLONE_REF_AUDIO_MAX_SEC` / `MIN_SEC` / `MIN_SR` | `30` / `1` / `8000` | 参考音频校验 |
 | `AUDIOCLONE_MAX_TEXT_LENGTH` | `300` | 单次合成最大字符数 |
 | `AUDIOCLONE_WEBUI_PORT` / `HOST` / `CONCURRENCY` | `7860` / `127.0.0.1` / `2` | WebUI 参数（CONCURRENCY 为推理并发上限） |
-| `AUDIOCLONE_ASR_SERVER_HOST` / `PORT` / `CTX_SIZE` / `N_GPU_LAYERS` | `127.0.0.1` / `8090` / `4096` / `99` | llama-server 参数 |
 | `AUDIOCLONE_ASR_AUDIO_MAX_SEC` / `SAMPLE_RATE` / `MAX_SEGMENT_SEC` | `300` / `16000` / `60` | ASR 时长/采样率/分片阈值 |
 | `AUDIOCLONE_ASR_HTTP_TIMEOUT` / `READY_TIMEOUT` | `120.0` / `60.0` | ASR HTTP / 就绪等待超时（秒） |
 | `AUDIOCLONE_MAX_UPLOAD_BYTES` | `104857600`(100MB) | API 上传音频大小上限 |
@@ -79,7 +77,13 @@ brew install llama.cpp
 | `AUDIOCLONE_TTS_NORMALIZE_LOUDNESS` | `false` | 落盘前按 EBU R128 响度归一化 |
 | `AUDIOCLONE_TTS_SEGMENT_GAP_SEC` | `0.15` | 长文本分段间插入静音（秒） |
 | `AUDIOCLONE_LOG_JSON` | `false` | 启用单行 JSON 结构化日志 |
-| `COSYVOICE_MODEL_DIR` | `pretrained_models/...` | API 服务覆盖 TTS 模型目录 |
+| `AUDIOCLONE_TTS_MODEL_DIR` | 无（HF 系统缓存） | 自定义 TTS 模型目录；默认用 HuggingFace 缓存（`~/.cache/huggingface/hub`） |
+| `AUDIOCLONE_ASR_MODEL_DIR` | 无（HF 系统缓存） | 自定义 ASR 模型目录（含 `.gguf`）；默认用 HuggingFace 缓存 |
+| `AUDIOCLONE_MIN_MLX_MEM_GB` | `8.0` | Apple Silicon 统一内存最低要求；低于则推理框架降级 onnx |
+| `AUDIOCLONE_MIN_CUDA_VRAM_GB` | `8.0` | NVIDIA **可用**显存最低要求（总量−其他进程占用，多卡取可用最大的一张）；低于则降级 onnx |
+| `AUDIOCLONE_ASR_NUM_THREADS` | `2` | sherpa-onnx（onnxruntime）推理线程数 |
+| `AUDIOCLONE_TENSORRT_ENGINE_DIR` | 无 | TensorRT Edge-LLM 引擎目录（`qwen3-tts-*-tensorrt` 后端专用，与模型权重目录无关） |
+| `AUDIOCLONE_HF_ENDPOINT` | 无（官方源） | 自定义 HuggingFace 镜像端点（如 `https://hf-mirror.com`）；也可用标准 `HF_ENDPOINT` |
 | `no_proxy` / `NO_PROXY` | `localhost,127.0.0.1`（入口自动设置） | 绕过本地代理 |
 
 完整示例见项目根 `.env.example`；也可直接复制为 `.env`（`pydantic-settings` 自动加载）。
@@ -103,7 +107,7 @@ TTS_BACKENDS["my-tts"] = {"model_id": "my-org/my-model"}
 |------|----------|---------|:---:|:---:|
 | Text-to-Speech | `TextToSpeechCapability` | `TTSService` | ✅ qwen3_tts_mlx（三变体） | dummy / dummy-omni |
 | Text-to-Audio | `TextToAudioCapability` | `TextToAudioService` | 待接入 | dummy-omni |
-| Speech-Recognition | `SpeechRecognitionCapability` | `ASRService` | ✅ qwen3_asr_llama | dummy-omni |
+| Speech-Recognition | `SpeechRecognitionCapability` | `ASRService` | ✅ qwen3_asr_mlx / sherpa_asr_onnx | dummy-omni |
 | Audio-to-Audio | `AudioToAudioCapability` | `AudioToAudioService` | 待接入 | dummy-omni |
 | Audio-Classification | `AudioClassificationCapability` | `AudioClassificationService` | 待接入 | dummy-omni |
 | Voice-Activity-Detection | `VoiceActivityCapability` | `VoiceActivityService` | 待接入 | dummy-omni |
@@ -167,10 +171,10 @@ uv run audioclone-api              # http://127.0.0.1:8000（见 §12 部署护�
 
 | 命令 | 说明 |
 |------|------|
-| `uv run audioclone-webui [--port 7860] [--host ...] [--model_dir X] [--asr_model_dir X] [--tts-backend NAME] [--asr-backend NAME] [--no_asr] [--theme dark\|light] [--no-browser]` | 启动 NiceGUI WebUI |
+| `uv run audioclone-webui [--port 7860] [--host ...] [--model_dir X] [--asr_model_dir X] [--tts-backend NAME] [--asr-backend NAME] [--t2a/a2a/classification/vad-backend NAME] [--no_asr] [--theme dark\|light] [--no-browser]` | 启动 NiceGUI WebUI（含多任务实验台） |
 | `uv run audioclone-api [--host 127.0.0.1] [--port 8000]` | 启动 FastAPI |
-| `uv run audioclone-download-tts [--local_dir X] [--backend NAME]` | 下载 TTS 模型（`--backend` 可指定任意已登记后端） |
-| `uv run audioclone-download-asr [--local_dir X] [--backend NAME]` | 下载 ASR 模型 |
+| `uv run audioclone-download-tts [--local_dir X] [--backend NAME] [--source auto\|hf\|modelscope]` | 下载 TTS 模型（默认 auto：HF 优先失败回退 ModelScope） |
+| `uv run audioclone-download-asr [--local_dir X] [--backend NAME] [--source auto\|hf\|modelscope]` | 下载 ASR 模型 |
 | `uv run pytest` | 运行测试（集成默认跳过） |
 | `uv run pytest -m "not integration"` | 单元/架构/契约/API 测试 |
 | `uv run pytest --cov=audioclone` | 带覆盖率（门槛 60%） |
@@ -193,13 +197,17 @@ GET /api/health
 ```json
 {
   "status": "ok",
-  "framework": "MLX",
+  "framework": "mlx",
   "backend": "qwen3-tts-base-mlx",
   "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
   "supported_modes": ["zero_shot", "cross_lingual"],
   "sample_rate": 24000,
   "model_loaded": true,
-  "model_slots": { "tts": "qwen3-tts-base-mlx", "asr": null }
+  "model_slots": { "tts": "qwen3-tts-base-mlx", "asr": null, "t2a": null, "a2a": null,
+                    "classification": null, "vad": null },
+  "runtime": { "os": "darwin", "machine": "arm64", "accelerator": "mlx",
+                "framework": "mlx", "mem_total_gb": 16.0, "gpu_vram_gb": null,
+                "gpu_vram_free_gb": null, "downgraded": false, "downgrade_reason": null }
 }
 ```
 
@@ -213,10 +221,10 @@ Content-Type: multipart/form-data
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|:---:|------|
 | `text` | string | ✓ | 合成文本（≤300 字符） |
-| `ref_audio` | file | ✓ | 参考音频（≤`AUDIOCLONE_MAX_UPLOAD_BYTES`，格式/时长/采样率校验） |
+| `ref_audio` | file | ✓（plain 可省略） | 参考音频（≤`AUDIOCLONE_MAX_UPLOAD_BYTES`，格式/时长/采样率校验） |
 | `ref_text` | string | | 参考音频对应文字 |
 | `speed` | float | | 语速 0.5~2.0，默认 1.0 |
-| `mode` | string | | `zero_shot` / `cross_lingual` / `instruct` |
+| `mode` | string | | `zero_shot` / `cross_lingual` / `instruct` / `plain`（纯文本直读） |
 | `instruct_text` | string | | 指令（instruct 模式必填） |
 
 curl 示例：
@@ -254,8 +262,31 @@ GET /api/outputs?limit=50&include_duration=true
 | 场景 | 状态码 | 说明 |
 |------|:---:|------|
 | 文本为空 / 超长 / 模式非法 / 格式不支持 / 音频非法 | 400 | `InvalidAudioInput` |
-| TTS 后端加载失败 / 不具备能力 | 503 | `ModelLoadError` |
+| TTS 后端加载失败 / 不具备能力 / 引擎未就绪 | 503 | `ModelLoadError` |
 | 合成内部异常 | 500 | 通用错误 |
+
+### 7.6 模型管理
+
+```
+GET /api/models            # 六任务模型就绪状态（离线查询：cached / model_path / hf_endpoint）
+POST /api/models/download  # 主动下载（后台执行，202；并发 409、未知后端 400）
+GET /api/models/download   # 下载任务进度
+```
+
+下载请求体：`{"task": "tts|asr|t2a|a2a|classification|vad", "backend": 可选,
+"local_dir": 可选, "source": "auto|hf|modelscope"}`（默认 auto：HF 优先，失败自动回退
+ModelScope；镜像端点 `AUDIOCLONE_HF_ENDPOINT`）。
+
+### 7.7 多任务端点
+
+| 接口 | 请求 | 响应 |
+|------|------|------|
+| `POST /api/t2a` | Form：`text`（必填）、`duration_sec`、`lyrics` | WAV 流，Header `X-Generation-Time` |
+| `POST /api/transform` | multipart：`audio`、`instruct` | WAV 流，Header `X-Transform-Time` |
+| `POST /api/classify` | multipart：`audio`、`top_k` | JSON `{"results": [{"label", "score"}]}`（情感 9 类 + 事件 4 类） |
+| `POST /api/vad` | multipart：`audio` | JSON `{"segments": [{"start", "end", "duration"}], "speech_sec"}` |
+
+四个端点的模型均在**首次调用时惰性加载**；模型未下载时返回 503 并附下载指引。
 
 ---
 
@@ -281,14 +312,28 @@ import numpy as np
 audio: np.ndarray = svc.infer_zero_shot("你好", "asset/zero_shot_prompt.wav")  # RLock 串行
 ```
 
-多任务（全能力后端）示例：
+> **模型下载**：WebUI 总览页有「模型下载」卡片，六任务状态一目了然、可一键下载
+> （调用与 CLI/API 共用同一 `model_manager` 实现）。
+
+多任务示例（推荐：`create_service(kind)` 六任务统一入口，后端按环境 auto 选择）：
 ```python
 from audioclone.core import (
-    AudioClassificationService, VoiceActivityService, create_tts_backend,
+    AudioClassificationService, VoiceActivityService, create_service, create_tts_backend,
 )
+cls = create_service("classification")   # mac → sensevoice-mlx；CPU → dummy（模型未接入时）
+print(cls.classify("asset/zero_shot_prompt.wav", top_k=3))
+print(create_service("vad").vad("asset/zero_shot_prompt.wav"))
+
+# 也可显式建 dummy-omni 全能力后端体验链路（无需模型）
 m = create_tts_backend("dummy-omni")
-print(AudioClassificationService(m).classify("asset/zero_shot_prompt.wav", top_k=3))
 print(VoiceActivityService(m).vad("asset/zero_shot_prompt.wav"))
+```
+
+模型下载（与 CLI/API 共用实现）：
+```python
+from audioclone.core import model_manager
+print(model_manager.model_status("asr"))            # cached / model_path / hf_endpoint
+model_manager.download_model("asr")                  # 主动下载（阻塞；API 为后台线程版）
 ```
 
 查询后端能力：
@@ -306,8 +351,11 @@ print(list_backend_capabilities(m))
 ### 9.1 接入新后端（复用既有能力）
 1. 新建 `core/backends/my_model.py`，继承 `ModelBackend` + 一个或多个能力接口
    （未实现能力方法会构造失败，提示你补全）。
-2. 在 `core/backends/registry.py` 注册（工厂唯一来源）；`config.py` 可选登记覆盖参数。
-3. 使用 `uv run audioclone-webui --tts-backend my-model` 启用。
+2. 在 `core/backends/registry.py` 注册（工厂唯一来源）；`config.py` 登记覆盖参数
+   （`*_BACKENDS` 表；含 `model_id` 时 `/api/models` 与下载接口自动管理该后端）。
+3. 在 `core/runtime.py` 的 `FRAMEWORK_BACKEND_CANDIDATES` 候选链加入后端名
+   （`auto` 选择的依据；显式指定后端时不需要）。
+4. 使用 `uv run audioclone-webui --tts-backend my-model` 启用。
 
 ### 9.2 新增能力（新任务）
 1. 在 `core/capabilities/` 新增 `*Capability`（`Capability, ABC` + `@abstractmethod`）。
@@ -334,7 +382,7 @@ uv run pytest                                      # 含集成（缺模型自动
 
 > 工程化：`make setup/lint/type/test/cov` 快捷命令；`uv tool run pre-commit install` 启用提交钩子（ruff+mypy+pytest）。
 
-集成测试（`tests/test_tts.py` / `test_asr.py` / `test_roundtrip.py`）需先下载模型并保证 `llama-server` 可用。
+集成测试（`tests/test_tts.py` / `test_roundtrip.py`）需先下载模型（ASR 需 `uv sync --extra onnx`）。
 
 ---
 
@@ -344,8 +392,8 @@ uv run pytest                                      # 含集成（缺模型自动
 |------|----------|------|
 | 启动 WebUI 报 `ImportError: Using SOCKS proxy... socksio` | 环境含 `ALL_PROXY=socks5://` | `unset ALL_PROXY all_proxy` 后启动，或安装 `httpx[socks]` |
 | WebUI 端口占用 503 / 连接失败 | 端口被占/本地代理 | 改 `--port`；确认 `no_proxy=localhost` 已设 |
-| "ASR 模型文件未找到" | 未下载 ASR 模型 / 未装 llama.cpp | `uv run audioclone-download-asr`；`brew install llama.cpp` |
-| ASR `RuntimeError: ASR 服务未就绪` | llama-server 未起/启动失败 | 查 `logs/asr_llama_server.log`、端口 8090、模型完整性 |
+| "ASR 模型未下载/未就位" | 模型未下载或未装 sherpa-onnx | `uv sync --extra onnx` + `uv run audioclone-download-asr`（或 `POST /api/models/download`） |
+| TensorRT TTS "需提供引擎目录" | Edge-LLM 引擎未构建/未指定 | 按 README「NVIDIA 平台」章节 export+build 后 `--model_dir` 指向引擎目录 |
 | API 返回 400 上传过大 | 超过 `AUDIOCLONE_MAX_UPLOAD_BYTES` | 调大 env 或压缩音频 |
 | `CapabilityError` | Service 接错后端 | 选用具备对应能力的能力后端（如 dummy-omni） |
 | 合成偶发异常 | 并发/模型不稳定 | `TTSService` 已 RLock 串行；重试即可 |
@@ -354,7 +402,7 @@ uv run pytest                                      # 含集成（缺模型自动
 
 ## 12. 生产与部署护栏（重要）
 
-- **版本**：当前仓库基线 `0.2.6`（单一来源 `audioclone.__version__`）；本使用说明适用版本 `v0.2.6`；质量报告见 `QUALITY-REPORT.md`。
+- **版本**：当前仓库基线 `0.3.0`（单一来源 `audioclone.__version__`）；本使用说明适用版本 `v0.3.0`；质量报告见 `QUALITY-REPORT.md`。
 - **绑定地址**：本地体验用 `--host 127.0.0.1`（**默认已仅本机绑定**）；**不要**直接以 `0.0.0.0` 暴露公网。
 - **反向代理 + TLS**：对外服务置于 Nginx/Caddy 后并以 HTTPS 提供。
 - **鉴权**：在反向代理层加 BasicAuth / OAuth；API 建议 `limit_req` 限流。

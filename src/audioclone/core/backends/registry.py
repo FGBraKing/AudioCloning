@@ -76,19 +76,48 @@ registry = BackendRegistry()
 
 
 def _register_defaults() -> None:
-    """预注册项目内置后端（注册表为工厂的唯一事实源）。"""
+    """预注册项目内置后端（注册表为工厂的唯一事实源）。
+
+    选型原则：默认模型仅选 **8bit 量化（或非 LLM 极小模型）、较新较强**的小模型，
+    参数量以 **≤3B** 为基线（T2A 音乐经用户决策放宽——MiniMax Music3 是唯一有
+    8bit 量化版的音乐生成模型）；且优先 mlx_audio 源码内置仓库/已确认存在的
+    mlx-community 仓库（不自实现、不猜仓库 ID）。默认不下载权重。
+    分类经用户决策采用 mlx_audio 原生 SenseVoice（情感+事件，一模型多任务），不引入 torch。
+    """
+    from audioclone.core.backends.deepfilternet_mlx import DeepFilterNetMLXBackend
     from audioclone.core.backends.dummy import DummyASRBackend, DummyOmnibackend, DummyTTSBackend
-    from audioclone.core.backends.qwen3_asr_llama import Qwen3AsrLlamaBackend
+    from audioclone.core.backends.minimax_music_mlx import MiniMaxMusicMLXBackend
+    from audioclone.core.backends.qwen3_asr_mlx import Qwen3AsrMLXBackend
     from audioclone.core.backends.qwen3_tts_mlx import (
         Qwen3TTSBaseMLXBackend,
         Qwen3TTSCustomVoiceMLXBackend,
         Qwen3TTSVoiceDesignMLXBackend,
     )
+    from audioclone.core.backends.qwen3_tts_tensorrt import (
+        Qwen3TTSBaseTensorRTBackend,
+        Qwen3TTSCustomVoiceTensorRTBackend,
+        Qwen3TTSVoiceDesignTensorRTBackend,
+    )
+    from audioclone.core.backends.sensevoice_mlx import SenseVoiceMLXBackend
+    from audioclone.core.backends.sherpa_asr_onnx import SherpaASROnnxBackend
+    from audioclone.core.backends.sherpa_tts_onnx import SherpaTTSOnnxBackend
+    from audioclone.core.backends.sherpa_vad_onnx import SherpaVADOnnxBackend
+    from audioclone.core.backends.silero_vad_mlx import SileroVADMLXBackend
 
-    registry.register("qwen3-asr-llama", Qwen3AsrLlamaBackend)
+    registry.register("qwen3-asr-mlx", Qwen3AsrMLXBackend)
+    registry.register("minimax-music-mlx", MiniMaxMusicMLXBackend)
+    registry.register("deepfilternet-mlx", DeepFilterNetMLXBackend)
+    registry.register("silero-vad-mlx", SileroVADMLXBackend)
+    registry.register("sherpa-asr-onnx", SherpaASROnnxBackend)
+    registry.register("sherpa-tts-onnx", SherpaTTSOnnxBackend)
+    registry.register("sherpa-vad-onnx", SherpaVADOnnxBackend)
+    registry.register("sensevoice-mlx", SenseVoiceMLXBackend)
     registry.register("qwen3-tts-base-mlx", Qwen3TTSBaseMLXBackend)
     registry.register("qwen3-tts-customvoice-mlx", Qwen3TTSCustomVoiceMLXBackend)
     registry.register("qwen3-tts-voicedesign-mlx", Qwen3TTSVoiceDesignMLXBackend)
+    registry.register("qwen3-tts-base-tensorrt", Qwen3TTSBaseTensorRTBackend)
+    registry.register("qwen3-tts-customvoice-tensorrt", Qwen3TTSCustomVoiceTensorRTBackend)
+    registry.register("qwen3-tts-voicedesign-tensorrt", Qwen3TTSVoiceDesignTensorRTBackend)
     registry.register("dummy-tts", DummyTTSBackend)
     registry.register("dummy-asr", DummyASRBackend)
     registry.register("dummy-omni", DummyOmnibackend)

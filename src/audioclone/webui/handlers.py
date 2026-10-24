@@ -19,16 +19,9 @@ from audioclone.core import (
     ASRService,
     AudioClassificationService,
     AudioToAudioService,
-    ModelBackend,
     TextToAudioService,
     TTSService,
     VoiceActivityService,
-)
-from audioclone.core.capabilities import (
-    AudioClassificationCapability,
-    AudioToAudioCapability,
-    TextToAudioCapability,
-    VoiceActivityCapability,
 )
 from audioclone.core.exceptions import AudioError
 from audioclone.utils.audio import assert_audio_duration, assert_valid_ref_audio
@@ -148,6 +141,45 @@ def make_instruct_handler(engine: TTSService) -> Callable[..., Any]:
     return handle
 
 
+def make_download_handler(task: str) -> Callable[..., Any]:
+    """创建模型下载处理函数（进程内调用 model_manager，阻塞直至完成）。
+
+    成功返回人类可读消息；失败经 ``ui_error`` 转 ``UIError``（BusyButton 态由
+    ``run_guarded`` 统一管理）。
+    """
+
+    @ui_error(f"下载 {task} 模型", "下载失败")
+    def handle() -> str:
+        from audioclone.core import model_manager
+
+        result = model_manager.download_model(task)
+        if result.get("status") == "skipped":
+            return "该后端无需下载模型"
+        source = result.get("source", "?")
+        fallback = "（经 ModelScope 回退）" if result.get("fallback") else ""
+        return f"下载完成（{source}{fallback}）: {result.get('path')}"
+
+    return handle
+
+
+def make_plain_handler(engine: TTSService) -> Callable[..., Any]:
+    """创建纯文本直读合成处理函数（plain 模式，无需参考音频）。"""
+
+    @ui_error("纯文本合成", "合成失败")
+    def handle(tts_text: Any, speed: Any) -> Any:
+        tts_text = assert_tts_text(tts_text, MAX_TEXT_LENGTH)
+        speed = float(speed) if speed else 1.0
+
+        logger.info("[WebUI] 纯文本合成")
+        start = time.time()
+        audio = engine.infer_plain(tts_text, speed=speed)
+        elapsed = time.time() - start
+        logger.info("[WebUI] 纯文本合成完成，耗时 %.2fs", elapsed)
+        return engine.sample_rate, audio
+
+    return handle
+
+
 def make_asr_handler(asr_engine: ASRService) -> Callable[..., Any]:
     """创建 ASR 语音识别处理函数。"""
     from audioclone.config import ASR_AUDIO_MAX_SEC, ASR_SUPPORTED_FORMATS
@@ -184,53 +216,46 @@ def make_asr_handler(asr_engine: ASRService) -> Callable[..., Any]:
     return handle
 
 
-def make_multitask_handlers(backend: ModelBackend) -> dict[str, Callable[..., Any]]:
-    """创建多任务实验台 handler（T2A / A2A / 分类 / VAD），按后端能力动态可用。"""
-    sample_rate = getattr(backend, "sample_rate", 24000)
+def make_multitask_handlers(services: dict[str, Any]) -> dict[str, Callable[..., Any]]:
+    """创建多任务实验台 handler（T2A / A2A / 分类 / VAD）。
 
-    def _guard(capability: type) -> None:
-        if not backend.supports(capability):
-            raise UIError(f"当前后端 ({backend.name}) 不支持该能力")
+    ``services`` 为各任务的**专属服务实例**（``create_service(kind)`` 创建，
+    服务构造期已按能力校验后端），不再复用 TTS 后端。
+    """
+    t2a_service = cast(TextToAudioService, services["t2a"])
+    a2a_service = cast(AudioToAudioService, services["a2a"])
+    cls_service = cast(AudioClassificationService, services["classification"])
+    vad_service = cast(VoiceActivityService, services["vad"])
 
     @ui_error("T2A 生成", "生成失败")
     def t2a(text: Any, duration_sec: Any) -> Any:
-        _guard(TextToAudioCapability)
         if not text or not text.strip():
             raise UIError("请输入文本提示")
-        audio = TextToAudioService(cast(TextToAudioCapability, backend)).generate(
-            text, duration_sec=float(duration_sec) if duration_sec else None
-        )
-        return sample_rate, audio
+        audio = t2a_service.generate(text, duration_sec=float(duration_sec) if duration_sec else None)
+        return t2a_service.backend.sample_rate, audio
 
     @ui_error("A2A 转换", "转换失败")
     def a2a(audio_path: Any, instruct: Any) -> Any:
-        _guard(AudioToAudioCapability)
         if not audio_path:
             raise UIError("请上传音频")
         assert_audio_duration(audio_path, ASR_AUDIO_MAX_SEC)  # 时长口径独立于 TTS（上限 300s）
-        audio = AudioToAudioService(cast(AudioToAudioCapability, backend)).transform(
-            audio_path, instruct=instruct or ""
-        )
-        return sample_rate, audio
+        audio = a2a_service.transform(audio_path, instruct=instruct or "")
+        return a2a_service.backend.sample_rate, audio
 
     @ui_error("音频分类", "分类失败")
     def classify(audio_path: Any, top_k: Any = None) -> str:
-        _guard(AudioClassificationCapability)
         if not audio_path:
             raise UIError("请上传音频")
         assert_audio_duration(audio_path, ASR_AUDIO_MAX_SEC)
-        labels = AudioClassificationService(cast(AudioClassificationCapability, backend)).classify(
-            audio_path, top_k=int(top_k or 5)
-        )
+        labels = cls_service.classify(audio_path, top_k=int(top_k or 5))
         return "\n".join(f"{name}: {score:.3f}" for name, score in labels)
 
     @ui_error("VAD 检测", "检测失败")
     def vad(audio_path: Any) -> str:
-        _guard(VoiceActivityCapability)
         if not audio_path:
             raise UIError("请上传音频")
         assert_audio_duration(audio_path, ASR_AUDIO_MAX_SEC)
-        segments = VoiceActivityService(cast(VoiceActivityCapability, backend)).vad(audio_path)
+        segments = vad_service.vad(audio_path)
         return "\n".join(f"[{s:.2f}s - {e:.2f}s]" for s, e in segments)
 
     return {"t2a": t2a, "a2a": a2a, "classify": classify, "vad": vad}
@@ -238,6 +263,8 @@ def make_multitask_handlers(backend: ModelBackend) -> dict[str, Callable[..., An
 
 __all__ = [
     "make_asr_handler",
+    "make_download_handler",
+    "make_plain_handler",
     "make_cross_lingual_handler",
     "make_instruct_handler",
     "make_multitask_handlers",

@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -77,9 +75,18 @@ def _assume_mlx_support(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_model_resolution(monkeypatch, tmp_path):
+    """模型解析返回本地临时目录：单元测试绝不触发 HF 缓存解析/网络下载。"""
+    monkeypatch.setattr(
+        "audioclone.core.backends.qwen3_tts_mlx.resolve_model_dir",
+        lambda model_id, model_dir: tmp_path,
+    )
+
+
 def _attach(backend: Qwen3TTSMLXBackend, model: _FakeQwen3TTSModel) -> Qwen3TTSMLXBackend:
     """注入假模型：绕过真实的 mlx_audio 加载。"""
-    backend._load_model = lambda loader: model  # type: ignore[method-assign]
+    backend._load_model = lambda loader, model_path: model  # type: ignore[method-assign]
     backend.load()
     return backend
 
@@ -109,7 +116,7 @@ def test_slot_is_tts_and_occupied_on_load():
     assert backend.slot is ModelSlot.TTS
 
     other = Qwen3TTSCustomVoiceMLXBackend()
-    other._load_model = lambda loader: _FakeQwen3TTSModel()  # type: ignore[method-assign]
+    other._load_model = lambda loader, model_path: _FakeQwen3TTSModel()  # type: ignore[method-assign]
     from audioclone.core import ModelSlotError
 
     with pytest.raises(ModelSlotError):
@@ -228,18 +235,51 @@ def test_empty_generation_raises():
         backend.synthesize("zero_shot", "你好", "ref.wav", ref_text="x")
 
 
-# ─── 模型目录命名（规避 mlx_audio 的架构误判） ────────────────
-def test_default_model_dir_avoids_arch_misdetect(tmp_path, monkeypatch):
-    """目录名不得含会被 mlx_audio 切出 'qwen3'/'base' 等片段的 '-'。"""
-    monkeypatch.setattr("audioclone.config.QWEN3_TTS_MODEL_DIR", tmp_path)
+# ─── 模型路径解析（默认 HF 系统缓存 / 自定义目录覆盖） ─────────
+def test_default_model_dir_is_hf_cache():
+    """默认不指定本地目录：model_dir 为 None，加载时按 model_id 解析 HF 系统缓存。"""
     for backend in (
         Qwen3TTSBaseMLXBackend(),
         Qwen3TTSCustomVoiceMLXBackend(),
         Qwen3TTSVoiceDesignMLXBackend(),
     ):
-        assert backend.model_dir.parent == tmp_path
-        assert "-" not in Path(backend.model_dir).name
-        assert Path(backend.model_dir).name.startswith("qwen3_tts_")
+        assert backend.model_dir is None
+        assert backend.model_id.startswith("mlx-community/Qwen3-TTS")
+
+
+def test_explicit_model_dir_wins_over_hf_cache(tmp_path):
+    """显式给定 model_dir 时按原样使用（自定义路径优先于 HF 缓存）。"""
+    backend = Qwen3TTSBaseMLXBackend(model_dir=tmp_path)
+    assert backend.model_dir == tmp_path
+
+
+def test_resolve_model_dir_custom_path(tmp_path):
+    """resolve_model_dir：自定义目录存在则直接返回，不存在则报可读错误。"""
+    from audioclone.utils.model_path import resolve_model_dir
+
+    assert resolve_model_dir("some/model", tmp_path) == tmp_path
+    with pytest.raises(ModelLoadError) as ei:
+        resolve_model_dir("some/model", tmp_path / "missing")
+    assert "不存在" in str(ei.value)
+
+
+def test_resolve_model_dir_does_not_download(monkeypatch):
+    """resolve_model_dir 未命中缓存时不下载，报带指引的错误。"""
+    from audioclone.utils import model_path
+
+    monkeypatch.setattr(model_path, "find_cached_model", lambda model_id: None)
+    with pytest.raises(ModelLoadError) as ei:
+        model_path.resolve_model_dir("some/model", None)
+    assert "未下载" in str(ei.value)
+
+
+def test_resolve_model_dir_requires_model_id_when_no_dir():
+    """既无自定义目录又无 model_id 时无法定位模型。"""
+    from audioclone.utils.model_path import resolve_model_dir
+
+    with pytest.raises(ModelLoadError) as ei:
+        resolve_model_dir("", None)
+    assert "model_id" in str(ei.value)
 
 
 # ─── 依赖缺失时的可操作报错 ──────────────────────────────────

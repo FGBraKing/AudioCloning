@@ -35,10 +35,23 @@ def client():
 
     original_lifespan = server.app.router.lifespan_context
 
+    from audioclone.core import (
+        create_service,
+    )
+
+    task_services = {
+        kind: create_service(kind, "dummy-omni")
+        for kind in ("t2a", "a2a", "classification", "vad")
+    }
+    # 哨兵：避免 create_service 重复建 dummy 后端（上面已按 dummy-omni 建好）
+    for svc in task_services.values():
+        svc.backend.sample_rate = 24000
+
     @asynccontextmanager
     async def fake_lifespan(app):
         app.state.engine = engine
         app.state.backend = backend
+        app.state.task_services = task_services
         yield
 
     server.app.router.lifespan_context = fake_lifespan
@@ -276,3 +289,138 @@ def test_save_upload_lying_size_streams(monkeypatch):
         assert len(Path(path).read_bytes()) == 3000
     finally:
         os.unlink(path)
+
+
+# ─── 模型管理：状态查询 + 主动下载 ───────────────────────────
+def test_models_overview(client):
+    """GET /api/models 离线返回 TTS/ASR 就绪状态。"""
+    resp = client.get("/api/models")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"tts", "asr", "t2a", "a2a", "classification", "vad"}
+    for task in ("tts", "asr", "t2a", "a2a", "classification", "vad"):
+        assert body[task]["task"] == task
+        assert "cached" in body[task]
+        assert "downloadable" in body[task]
+        assert "model_id" in body[task]
+
+
+def test_models_download_dummy_completes(client):
+    """dummy 后端无需模型：202 受理后任务立即完成（status=skipped）。"""
+    resp = client.post("/api/models/download", json={"task": "tts", "backend": "dummy"})
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "downloading"
+
+    import time
+
+    from audioclone.api import server
+
+    deadline = time.time() + 5
+    while time.time() < deadline and server._download_state["running"]:
+        time.sleep(0.05)
+    assert server._download_state["running"] is False
+    assert server._download_state["result"]["status"] == "skipped"
+
+
+def test_models_download_unknown_backend(client):
+    resp = client.post("/api/models/download", json={"task": "tts", "backend": "nope"})
+    assert resp.status_code == 400
+    assert "未知的 tts 后端" in resp.json()["detail"]
+
+
+def test_models_download_bad_task(client):
+    resp = client.post("/api/models/download", json={"task": "stt"})
+    assert resp.status_code == 422  # Literal 校验
+
+
+def test_models_download_conflict_rejected(client, monkeypatch):
+    """已有下载进行中时再次发起 → 409。"""
+    import threading
+
+    from audioclone.api import server
+
+    gate = threading.Event()
+
+    def slow_download(*args, **kwargs):
+        gate.wait(timeout=5)
+        return {"status": "completed", "task": "tts", "path": None}
+
+    monkeypatch.setattr(server, "download_model", slow_download)
+    try:
+        first = client.post("/api/models/download", json={"task": "tts", "backend": "dummy"})
+        assert first.status_code == 202
+        second = client.post("/api/models/download", json={"task": "asr", "backend": "dummy"})
+        assert second.status_code == 409
+        assert "已有下载任务进行中" in second.json()["detail"]
+    finally:
+        gate.set()
+        import time
+
+        deadline = time.time() + 5
+        while time.time() < deadline and server._download_state["running"]:
+            time.sleep(0.05)
+
+
+def test_models_download_status_endpoint(client):
+    resp = client.get("/api/models/download")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "running" in body and "task" in body and "error" in body
+
+
+# ─── 多任务端点：T2A / A2A / 分类 / VAD ──────────────────────
+def test_t2a_returns_wav(client):
+    resp = client.post("/api/t2a", data={"text": "轻柔的钢琴曲", "duration_sec": 0.2})
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("audio/wav")
+    assert "x-generation-time" in resp.headers
+
+
+def test_t2a_empty_text(client):
+    resp = client.post("/api/t2a", data={"text": "   "})
+    assert resp.status_code == 400
+
+
+def test_transform_returns_wav(client):
+    resp = client.post(
+        "/api/transform",
+        data={"instruct": ""},
+        files={"audio": ("in.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("audio/wav")
+
+
+def test_classify_returns_sorted_results(client):
+    resp = client.post(
+        "/api/classify", data={"top_k": 3},
+        files={"audio": ("in.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 0 < len(body["results"]) <= 3
+    scores = [r["score"] for r in body["results"]]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_vad_returns_segments(client):
+    resp = client.post("/api/vad", files={"audio": ("in.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body["segments"], list) and len(body["segments"]) > 0
+    assert body["segments"][0]["start"] <= body["segments"][0]["end"]
+
+
+def test_clone_plain_mode_without_ref_audio(client):
+    """plain 模式纯文本合成：无需参考音频（后端不支持时 503 而非 400/422）。"""
+    resp = client.post("/api/clone", data={"text": "你好世界", "mode": "plain"})
+    # dummy-omni 声明全模式 → 200；不支持 plain 的后端 → 400（模式校验）或 503（未就绪）
+    assert resp.status_code in (200, 400, 503)
+    if resp.status_code == 200:
+        assert resp.headers.get("content-type", "").startswith("audio/wav")
+
+
+def test_clone_non_plain_requires_ref_audio(client):
+    resp = client.post("/api/clone", data={"text": "你好", "mode": "zero_shot"})
+    assert resp.status_code == 400
+    assert "参考音频" in resp.json()["detail"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,8 @@ class AudioToAudioService:
                 "(AudioToAudioCapability)"
             )
         self.backend = backend
+        # 推理互斥锁：后端模型非线程安全，API 线程池并发下保护
+        self._lock = threading.RLock()
         self.sample_rate = getattr(backend, "sample_rate", None)
 
     def transform(
@@ -42,4 +45,5 @@ class AudioToAudioService:
         """
         if not Path(audio_path).exists():
             raise InvalidAudioInput(f"音频文件不存在: {audio_path}")
-        return self.backend.transform(audio_path, instruct=instruct, speed=speed, **kwargs)
+        with self._lock:
+            return self.backend.transform(audio_path, instruct=instruct, speed=speed, **kwargs)

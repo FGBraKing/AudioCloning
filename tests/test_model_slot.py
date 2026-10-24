@@ -117,7 +117,7 @@ def test_tts_and_asr_slots_are_independent():
     model_slots.acquire(ModelSlot.ASR, "fake-asr")
 
     snapshot = model_slots.snapshot()
-    assert snapshot == {"tts": "fake-tts", "asr": "fake-asr"}
+    assert {k: snapshot[k] for k in ("tts", "asr")} == {"tts": "fake-tts", "asr": "fake-asr"}
 
 
 # ─── 无状态后端不占槽 ────────────────────────────────────────
@@ -126,7 +126,8 @@ def test_slotless_backend_does_not_occupy():
         name = "stateless"
 
     Stateless().load()
-    assert model_slots.snapshot() == {"tts": None, "asr": None}
+    snap = model_slots.snapshot()
+    assert set(snap.values()) == {None}
 
 
 # ─── 服务层组合：一个 TTS + 一个 ASR ─────────────────────────
@@ -147,11 +148,14 @@ def test_one_tts_plus_one_asr_coexist():
     tts.load()
     asr.load()
 
-    assert model_slots.snapshot() == {"tts": "fake-tts", "asr": "fake-asr"}
+    assert {k: model_slots.snapshot()[k] for k in ("tts", "asr")} == {
+        "tts": "fake-tts", "asr": "fake-asr",
+    }
 
     tts.close()
     asr.close()
-    assert model_slots.snapshot() == {"tts": None, "asr": None}
+    snap = model_slots.snapshot()
+    assert set(snap.values()) == {None}
 
 
 def test_stateless_backends_never_occupy_slots():
@@ -160,4 +164,5 @@ def test_stateless_backends_never_occupy_slots():
 
     DummyTTSBackend().load()
     DummyOmnibackend().load()
-    assert model_slots.snapshot() == {"tts": None, "asr": None}
+    snap = model_slots.snapshot()
+    assert set(snap.values()) == {None}

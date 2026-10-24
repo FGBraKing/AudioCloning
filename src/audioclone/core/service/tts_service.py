@@ -105,6 +105,13 @@ class TTSService:
                 "instruct", text, ref_audio_path, instruct_text=instruct_text, speed=speed
             )
 
+    def infer_plain(self, text: str, speed: float = 1.0) -> np.ndarray:
+        """纯文本直读合成（无需参考音频/指令；sherpa-onnx Kokoro 等）。"""
+        text = normalize_text(text)
+        logger.info("[TTS] 纯文本合成 文本: %s...", text[:50])
+        with self._lock:
+            return self.backend.synthesize("plain", text, "", speed=speed)
+
     # ─── 长文本编排（分段 + 落盘） ────────────────────────────
     def synthesize_to_file(
         self,
@@ -159,6 +166,8 @@ class TTSService:
                 audio = self.infer_zero_shot(seg, ref_audio_path, ref_text, speed)
             elif mode == "cross_lingual":
                 audio = self.infer_cross_lingual(seg, ref_audio_path, speed)
+            elif mode == "plain":
+                audio = self.infer_plain(seg, speed)
             else:
                 audio = self.infer_instruct(seg, instruct_text, ref_audio_path, speed)
 

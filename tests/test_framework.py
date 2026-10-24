@@ -338,7 +338,7 @@ def test_registry_list_backends_for():
     } <= tts
 
     asr = set(registry.list_backends_for(SpeechRecognitionCapability))
-    assert {"dummy-asr", "dummy-omni", "qwen3-asr-llama"} <= asr
+    assert {"dummy-asr", "dummy-omni", "qwen3-asr-mlx", "sherpa-asr-onnx"} <= asr
     # Qwen3-TTS 三个变体只做 TTS，不应出现在 ASR 能力清单里
     assert not {"qwen3-tts-base-mlx", "qwen3-tts-customvoice-mlx"} & asr
 

@@ -1,4 +1,4 @@
-"""TTS + ASR 回环交叉验证 (需要本地模型与 llama.cpp)。
+"""TTS + ASR 回环交叉验证 (需要本地模型；ASR 走 sherpa-onnx)。
 
 流程: Text → Qwen3-TTS 合成 → WAV → Qwen3-ASR 识别 → 文本比对 (LCS ≥ 80%)。
 """
@@ -10,7 +10,7 @@ import re
 import pytest
 
 from audioclone.config import ASSET_DIR
-from audioclone.core import ASRService, TTSService, create_asr_backend, create_tts_backend
+from audioclone.core import TTSService, create_tts_backend
 
 TEST_TEXT = "你好，欢迎使用个人声音克隆系统。这是一段测试语音。"
 REF_TEXT = "希望你以后能够做的比我还好呦。"
@@ -63,8 +63,8 @@ def test_roundtrip(tts_model_dir: str, asr_ready: bool):
     if not ref_audio.exists():
         pytest.skip(f"参考音频不存在: {ref_audio}")
 
-    # 1) TTS 合成
-    engine = TTSService(create_tts_backend())
+    # 1) TTS 合成（显式指向本地 pretrained_models，避免默认走 HF 缓存/网络）
+    engine = TTSService(create_tts_backend(model_dir=tts_model_dir))
     synth_path = engine.synthesize_to_file(
         mode="zero_shot",
         text=TEST_TEXT,
@@ -73,9 +73,13 @@ def test_roundtrip(tts_model_dir: str, asr_ready: bool):
         filename="test_roundtrip_tts.wav",
     )
 
-    # 2) ASR 识别
-    with ASRService(create_asr_backend()) as asr_engine:
-        recognized = asr_engine.transcribe(synth_path)
+    # 2) ASR 识别（sherpa-onnx；模型未就位则跳过）
+    from audioclone.core import create_service
+
+    asr_service = create_service("asr", "sherpa-asr-onnx")
+    if not asr_service.is_model_available:
+        pytest.skip("sherpa-onnx ASR 模型未就位（uv sync --extra onnx 并下载模型后可跑）")
+    recognized = asr_service.transcribe(synth_path)
 
     # 3) 比对
     ratio = _similarity_ratio(TEST_TEXT, recognized)

@@ -11,12 +11,9 @@ from typing import Any
 
 from nicegui import ui
 
+from audioclone.core import model_manager  # noqa: E402
 from audioclone.core.capabilities import (
     TTS_MODES,
-    AudioClassificationCapability,
-    AudioToAudioCapability,
-    TextToAudioCapability,
-    VoiceActivityCapability,
 )
 from audioclone.webui import theme
 from audioclone.webui.widgets import (
@@ -141,6 +138,18 @@ MODE_LABELS: dict[str, str] = {
 # ─────────────────────────────────────────────────────────────
 # 面板 1：总览 / 系统状态
 # ─────────────────────────────────────────────────────────────
+
+
+#: 下载卡片中的任务显示名
+_TASK_DISPLAY_NAMES = {
+    "tts": "语音合成 (TTS)",
+    "asr": "语音识别 (ASR)",
+    "t2a": "音乐生成 (T2A)",
+    "a2a": "语音增强 (A2A)",
+    "classification": "音频分类",
+    "vad": "语音活动检测 (VAD)",
+}
+
 def build_overview_panel(status: SystemStatus) -> Panel:
     with ui.column().classes("w-full gap-5") as container:
         # Hero
@@ -149,8 +158,8 @@ def build_overview_panel(status: SystemStatus) -> Panel:
                 theme.eyebrow("AudioCloning · 音频模型体验工具箱")
                 ui.label("把文字变成你的声音").classes("text-3xl font-bold ac-gradient-text")
                 ui.label(
-                    "基于 Qwen3-TTS (MLX) 与 Qwen3-ASR，支持零样本克隆、跨语言合成、"
-                    "自然语言指令控制与语音识别，全部在本地 Apple Silicon 上完成。"
+                    "Qwen3-TTS 声音克隆、语音识别、音乐生成、语音增强、情感分类与 VAD，"
+                    "按运行环境自动选择推理框架（MLX / TensorRT Edge-LLM / sherpa-onnx），全部本地完成。"
                 ).classes("ac-hint max-w-3xl")
                 with ui.row().classes("flex-wrap gap-2 mt-1"):
                     theme.chip(f"v{status.version}", tone="accent")
@@ -197,6 +206,37 @@ def build_overview_panel(status: SystemStatus) -> Panel:
                         for name in status.capabilities:
                             theme.chip(name, tone="ok")
 
+        # 模型下载（六任务状态 + 一键下载）
+        with theme.card():
+            with theme.section("模型下载", icon="cloud_download"):
+                ui.label(
+                    "各任务模型默认不预置，点击下载（HuggingFace 优先，失败自动回退 "
+                    "ModelScope；镜像端点 AUDIOCLONE_HF_ENDPOINT）。"
+                ).classes("ac-hint")
+                dl_widgets: dict[str, Any] = {}
+                for kind in ("tts", "asr", "t2a", "a2a", "classification", "vad"):
+                    st = model_manager.model_status(kind)
+                    backend_name = st.get("backend", kind)
+                    downloadable = st.get("downloadable") is True
+                    cached = st.get("cached") is True
+                    with grid("grid-cols-1 md:grid-cols-12 items-center gap-2"):
+                        with ui.row().classes("md:col-span-8 items-center gap-2"):
+                            ui.label(_TASK_DISPLAY_NAMES[kind]).classes("text-[14px] font-semibold")
+                            theme.chip(backend_name,
+                                       tone="warn" if backend_name.startswith("dummy") else "ok")
+                            if not downloadable:
+                                theme.chip("无需模型", tone="accent")
+                            elif cached:
+                                theme.chip("已就位", tone="ok")
+                            else:
+                                theme.chip("未下载", tone="warn")
+                        with ui.row().classes("md:col-span-4 justify-end"):
+                            btn = BusyButton("下载模型", icon="cloud_download")
+                            btn.set_enabled(downloadable and not cached)
+                            status_label = ui.label("").classes("ac-hint")
+                        dl_widgets[f"dl_{kind}_btn"] = btn
+                        dl_widgets[f"dl_{kind}_status"] = status_label
+
         # 快速上手
         with theme.card():
             with theme.section("快速上手", icon="rocket_launch"):
@@ -214,7 +254,8 @@ def build_overview_panel(status: SystemStatus) -> Panel:
                             ui.label(title).classes("text-[14px] font-semibold")
                             ui.label(desc).classes("ac-hint")
 
-    return Panel(key="overview", title="总览", icon="space_dashboard", container=container)
+    return Panel(key="overview", title="总览", icon="space_dashboard",
+                 container=container, widgets=dl_widgets)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -415,6 +456,57 @@ def build_instruct_panel(supported_modes: tuple[str, ...] = TTS_MODES) -> Panel:
 # ─────────────────────────────────────────────────────────────
 # 面板 5：语音识别 (ASR)
 # ─────────────────────────────────────────────────────────────
+def build_plain_panel(supported_modes: tuple[str, ...] = TTS_MODES) -> Panel:
+    """纯文本直读合成面板（plain 模式；sherpa-onnx Kokoro 等，无需参考音频）。"""
+    mode_ok = mode_guard("plain", supported_modes)
+    with ui.column().classes("w-full gap-5") as container:
+        with theme.card(dense=True):
+            with ui.column().classes("w-full gap-1"):
+                ui.label("纯文本合成").classes("text-xl font-bold")
+                ui.label(
+                    "无需参考音频，直接由预置音色朗读文本（plain 模式；"
+                    "适合 sherpa-onnx Kokoro 等 CPU 推理后端）。"
+                ).classes("ac-hint")
+            if not mode_ok:
+                ui.label("当前后端不支持 plain 模式，请切换后端（如 sherpa-tts-onnx）。").classes(
+                    "ac-hint text-orange-400"
+                )
+
+        with theme.card():
+            with theme.section("合成文本", icon="edit_note"):
+                text = CharCounterTextarea(
+                    label="输入合成文本",
+                    value="你好，这是纯文本直读合成的示例。",
+                    placeholder="请输入需要合成的文本…",
+                    rows=4,
+                )
+                speed = SpeedControl()
+                theme.divider()
+                with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                    generate = BusyButton("开始合成", icon="record_voice_over", classes="ac-btn-primary px-5")
+                    clear = (
+                        ui.button("清空", icon="restart_alt")
+                        .props("flat no-caps")
+                        .classes("ac-btn-ghost")
+                    )
+            with ui.row().classes("w-full"):
+                result = AudioResult(title="合成结果")
+
+    return Panel(
+        key="plain",
+        title="纯文本合成",
+        icon="record_voice_over",
+        container=container,
+        widgets={
+            "text": text,
+            "speed": speed,
+            "generate": generate,
+            "clear": clear,
+            "result": result,
+        },
+    )
+
+
 def build_asr_panel() -> Panel:
     with ui.column().classes("w-full gap-5") as container:
         with theme.card(dense=True):
@@ -461,18 +553,26 @@ def build_asr_panel() -> Panel:
 # ─────────────────────────────────────────────────────────────
 # 面板 6：多任务实验台
 # ─────────────────────────────────────────────────────────────
-def _capability_badge(supported: bool) -> None:
-    theme.chip("后端支持" if supported else "后端不支持", tone="ok" if supported else "warn")
+def _backend_badge(services: dict[str, Any], kind: str) -> None:
+    """任务卡片徽标：显示该任务实际使用的后端名（dummy 以警示色区分）。"""
+    backend = getattr(services.get(kind), "backend", None)
+    name = getattr(backend, "name", "未接入")
+    theme.chip(name, tone="warn" if name.startswith("dummy") else "ok")
 
 
-def build_multitask_panel(backend: Any) -> Panel:
+def build_multitask_panel(task_services: dict[str, Any]) -> Panel:
+    """多任务实验台：T2A / A2A / 分类 / VAD 各绑定专属后端。
+
+    ``task_services`` 为 ``{kind: service}``（``create_service(kind)`` 创建，
+    服务构造期已按能力校验后端），各卡片徽标显示实际后端名。
+    """
     with ui.column().classes("w-full gap-5") as container:
         with theme.card(dense=True):
             with ui.column().classes("w-full gap-1"):
                 ui.label("多任务实验台").classes("text-xl font-bold")
                 ui.label(
                     "文本转音频 / 音频到音频 / 音频分类 / 语音活动检测。"
-                    "各任务按后端能力动态可用，使用 dummy-omni 全能力后端可全部体验。"
+                    "各任务使用独立后端（徽标显示后端名；模型未下载时点击会提示下载方式）。"
                 ).classes("ac-hint")
 
         with grid("grid-cols-1 xl:grid-cols-2"):
@@ -480,7 +580,7 @@ def build_multitask_panel(backend: Any) -> Panel:
             with theme.card():
                 with ui.row().classes("w-full items-center justify-between"):
                     theme.section_heading("文本转音频 (T2A)", icon="music_note")
-                    _capability_badge(backend.supports(TextToAudioCapability))
+                    _backend_badge(task_services, "t2a")
                 t2a_text = (
                     ui.textarea(label="文本提示（描述声音/音乐/音效）", value="轻柔的钢琴背景音乐")
                     .classes("w-full ac-field")
@@ -496,7 +596,7 @@ def build_multitask_panel(backend: Any) -> Panel:
             with theme.card():
                 with ui.row().classes("w-full items-center justify-between"):
                     theme.section_heading("音频到音频 (A2A)", icon="transform")
-                    _capability_badge(backend.supports(AudioToAudioCapability))
+                    _backend_badge(task_services, "a2a")
                 a2a_audio = AudioInput(
                     title="上传音频",
                     upload_label="拖放音频文件，或点击选择文件",
@@ -514,7 +614,7 @@ def build_multitask_panel(backend: Any) -> Panel:
             with theme.card():
                 with ui.row().classes("w-full items-center justify-between"):
                     theme.section_heading("音频分类", icon="category")
-                    _capability_badge(backend.supports(AudioClassificationCapability))
+                    _backend_badge(task_services, "classification")
                 cls_audio = AudioInput(
                     title="上传音频",
                     upload_label="拖放音频文件，或点击选择文件",
@@ -527,7 +627,7 @@ def build_multitask_panel(backend: Any) -> Panel:
             with theme.card():
                 with ui.row().classes("w-full items-center justify-between"):
                     theme.section_heading("语音活动检测 (VAD)", icon="graphic_eq")
-                    _capability_badge(backend.supports(VoiceActivityCapability))
+                    _backend_badge(task_services, "vad")
                 vad_audio = AudioInput(
                     title="上传音频",
                     upload_label="拖放音频文件，或点击选择文件",
@@ -640,6 +740,7 @@ __all__ = [
     "build_guide_panel",
     "build_instruct_panel",
     "build_multitask_panel",
+    "build_plain_panel",
     "build_overview_panel",
     "build_zero_shot_panel",
 ]

@@ -25,7 +25,6 @@ from nicegui import app, ui  # noqa: E402
 
 from audioclone import __version__  # noqa: E402
 from audioclone.config import (  # noqa: E402
-    ASR_SERVER_PORT,
     LOG_JSON,
     WEBUI_CONCURRENCY,
     WEBUI_HOST,
@@ -36,6 +35,7 @@ from audioclone.core import (  # noqa: E402
     ModelBackend,
     TTSService,
     create_asr_backend,
+    create_service,
     create_tts_backend,
     list_backend_capabilities,
 )
@@ -44,6 +44,7 @@ from audioclone.core.capabilities import (  # noqa: E402
     TextToSpeechCapability,
 )
 from audioclone.core.exceptions import ModelLoadError  # noqa: E402
+from audioclone.core.runtime import detect_runtime  # noqa: E402
 from audioclone.utils.logging_utils import configure_logging  # noqa: E402
 from audioclone.webui import media, theme, widgets  # noqa: E402
 from audioclone.webui.components import (  # noqa: E402
@@ -55,13 +56,16 @@ from audioclone.webui.components import (  # noqa: E402
     build_instruct_panel,
     build_multitask_panel,
     build_overview_panel,
+    build_plain_panel,
     build_zero_shot_panel,
 )
 from audioclone.webui.handlers import (  # noqa: E402
     make_asr_handler,
     make_cross_lingual_handler,
+    make_download_handler,
     make_instruct_handler,
     make_multitask_handlers,
+    make_plain_handler,
     make_zero_shot_handler,
 )
 
@@ -90,7 +94,7 @@ def _build_index() -> None:
     status: SystemStatus = app.state.webui_status
     engine: TTSService = app.state.engine
     asr_engine: ASRService = app.state.asr_engine
-    backend: ModelBackend = app.state.backend
+    task_services: dict[str, Any] = app.state.task_services
 
     dark = ui.dark_mode(app.state.webui_dark)
     nav_state = {"open": False}
@@ -125,7 +129,7 @@ def _build_index() -> None:
             with ui.row().classes("items-center gap-2 ac-lg-up"):
                 theme.chip(f"TTS · {status.tts_backend}", tone="ok" if status.tts_ready else "err")
                 theme.chip(
-                    f"ASR · {status.asr_backend}" + (f" :{ASR_SERVER_PORT}" if status.asr_ready else ""),
+                    f"ASR · {status.asr_backend}",
                     tone="ok" if status.asr_ready else "warn",
                 )
 
@@ -153,13 +157,15 @@ def _build_index() -> None:
                     build_zero_shot_panel(status.tts_modes),
                     build_cross_lingual_panel(status.tts_modes),
                     build_instruct_panel(status.tts_modes),
+                    build_plain_panel(status.tts_modes),
                     build_asr_panel(),
-                    build_multitask_panel(backend),
+                    build_multitask_panel(task_services),
                     build_guide_panel(),
                 ]
 
     _wire_navigation(panels, sidebar, mobile_nav, nav_state)
-    _wire_handlers(panels, engine, asr_engine, backend)
+    _wire_handlers(panels, engine, asr_engine, task_services)
+    _wire_download_buttons({p.key: p for p in panels})
 
 
 def _wire_navigation(
@@ -204,18 +210,19 @@ def _wire_handlers(
     panels: list[Panel],
     engine: TTSService,
     asr_engine: ASRService,
-    backend: ModelBackend,
+    task_services: dict[str, Any],
 ) -> None:
     """绑定各面板的业务事件（逻辑全部来自 handlers 层）。"""
     by_key = {panel.key: panel for panel in panels}
     zs, cl, inst = by_key["zero_shot"], by_key["cross_lingual"], by_key["instruct"]
-    asr_panel, mt = by_key["asr"], by_key["multitask"]
+    plain, asr_panel, mt = by_key["plain"], by_key["asr"], by_key["multitask"]
 
     zero_shot = make_zero_shot_handler(engine)
     cross_lingual = make_cross_lingual_handler(engine)
     instruct = make_instruct_handler(engine)
+    plain_handler = make_plain_handler(engine)
     asr_handler = make_asr_handler(asr_engine)
-    mt_handlers = make_multitask_handlers(backend)
+    mt_handlers = make_multitask_handlers(task_services)
 
     # ── 声音克隆（零样本） ─────────────────────────────────
     async def on_zero_shot() -> None:
@@ -292,6 +299,24 @@ def _wire_handlers(
     inst["generate"].on_click(on_instruct)
     inst["clear"].on_click(clear_instruct)
 
+    # ── 纯文本合成 (plain) ─────────────────────────────────
+    async def on_plain() -> None:
+        w = plain.widgets
+        out = await widgets.run_guarded(
+            w["generate"], lambda: _infer(plain_handler, w["text"].value, w["speed"].value)
+        )
+        if out:
+            sample_rate, audio = out
+            w["result"].show(audio, sample_rate, prefix="plain")
+
+    def clear_plain() -> None:
+        plain["text"].set_value("")
+        plain["speed"].reset()
+        plain["result"].clear()
+
+    plain["generate"].on_click(on_plain)
+    plain["clear"].on_click(clear_plain)
+
     # ── 语音识别 (ASR) ─────────────────────────────────────
     async def on_asr() -> None:
         w = asr_panel.widgets
@@ -352,6 +377,43 @@ def _wire_handlers(
     mt["vad_generate"].on_click(on_vad)
 
 
+def _wire_download_buttons(panels_by_key: dict[str, Panel]) -> None:
+    """绑定总览面板的模型下载按钮：进程内下载，完成后刷新状态标签。"""
+    from audioclone.core import model_manager
+
+    overview = panels_by_key.get("overview")
+    if overview is None:
+        return
+
+    for kind in ("tts", "asr", "t2a", "a2a", "classification", "vad"):
+        btn = overview.widgets.get(f"dl_{kind}_btn")
+        status_label = overview.widgets.get(f"dl_{kind}_status")
+        if btn is None or status_label is None:
+            continue
+
+        handler = make_download_handler(kind)
+
+        def _refresh(kind: str = kind, status_label: Any = status_label) -> None:
+            st = model_manager.model_status(kind)
+            if st.get("cached") is True:
+                status_label.set_value("已就位 ✓")
+            elif st.get("downloadable") is False:
+                status_label.set_value("该后端无需模型")
+            else:
+                status_label.set_value("仍未下载（可手动重试）")
+
+        async def on_download(
+            kind: str = kind, btn: Any = btn, handler: Any = handler
+        ) -> None:
+            out = await widgets.run_guarded(btn, lambda: _infer(handler))
+            if out is not None:
+                widgets.notify_success(str(out))
+                await widgets.io_bound(_refresh)
+                _refresh()
+
+        btn.on_click(on_download)
+
+
 # ─────────────────────────────────────────────────────────────
 # 装配入口
 # ─────────────────────────────────────────────────────────────
@@ -371,10 +433,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AudioCloning WebUI", prog="audioclone-webui")
     parser.add_argument("--port", type=int, default=WEBUI_PORT)
     parser.add_argument("--host", type=str, default=WEBUI_HOST)
-    parser.add_argument("--model_dir", type=str, default=None, help="TTS 模型目录路径")
-    parser.add_argument("--asr_model_dir", type=str, default=None, help="ASR 模型目录路径")
+    parser.add_argument(
+        "--model_dir", type=str, default=None,
+        help="TTS 模型目录（默认使用 HuggingFace 系统缓存）",
+    )
+    parser.add_argument(
+        "--asr_model_dir", type=str, default=None,
+        help="ASR 模型目录（默认使用 HuggingFace 系统缓存）",
+    )
     parser.add_argument("--tts-backend", type=str, default=None, help="TTS 后端名称")
     parser.add_argument("--asr-backend", type=str, default=None, help="ASR 后端名称")
+    parser.add_argument("--t2a-backend", type=str, default=None, help="T2A（音乐生成）后端名称")
+    parser.add_argument("--a2a-backend", type=str, default=None, help="A2A（音频转换）后端名称")
+    parser.add_argument("--classification-backend", type=str, default=None, help="音频分类后端名称")
+    parser.add_argument("--vad-backend", type=str, default=None, help="VAD 后端名称")
     parser.add_argument("--no_asr", action="store_true", help="禁用 ASR 功能")
     parser.add_argument(
         "--theme", choices=("dark", "light"), default="dark", help="界面配色（默认 dark）"
@@ -386,8 +458,15 @@ def main() -> None:
     logger.info("  AudioCloning - 音频模型体验工具箱 v%s", __version__)
     logger.info("=" * 60)
 
+    # 运行环境探测（决定 auto 后端选择的推理框架）：macOS→MLX / NVIDIA→TensorRT-LLM /
+    # AMD 独显→vLLM / AMD 核显与无 GPU→onnx（sherpa-onnx）；显存/内存不足自动降级 onnx。
+    # 探测结果（含 mem/vram 容量与降级原因）由 runtime 模块自行输出日志，
+    # 并经 /api/health 的 runtime 字段暴露；显式 --tts-backend/--asr-backend 时不受影响
+    detect_runtime()
+
     tts_backend: ModelBackend | None = None
     asr_backend: ModelBackend | None = None
+    task_backends: list[ModelBackend] = []
     try:
         # 加载 TTS 服务（后端经 model_loader 创建，默认 qwen3-tts-base-mlx）
         tts_opts: dict = {}
@@ -412,7 +491,7 @@ def main() -> None:
         engine = TTSService(cast(TextToSpeechCapability, tts_backend))
         logger.info("TTS 服务就绪 (采样率 %s, 加载耗时 %.1fs)", engine.sample_rate, tts_load_sec)
 
-        # 初始化 ASR 服务（后端经 model_loader 创建，默认 qwen3-asr-llama）
+        # 初始化 ASR 服务（后端经 model_loader 创建，默认按环境自动选择）
         asr_opts: dict = {}
         if args.asr_backend is not None:
             asr_opts["name"] = args.asr_backend
@@ -433,8 +512,23 @@ def main() -> None:
         else:
             logger.info("ASR 功能已禁用 (--no_asr)")
 
+        # 多任务实验台：四个任务各绑专属服务（构造轻量不加载模型；首次调用时惰性加载）
+        task_services: dict[str, Any] = {}
+        task_backends = []
+        for kind, cli_name in (
+            ("t2a", args.t2a_backend),
+            ("a2a", args.a2a_backend),
+            ("classification", args.classification_backend),
+            ("vad", args.vad_backend),
+        ):
+            svc = create_service(kind, cli_name)
+            task_services[kind] = svc
+            task_backends.append(svc.backend)
+            logger.info("多任务后端 [%s]: %s", kind, svc.backend.name)
+
         app.state.engine = engine
         app.state.asr_engine = asr_engine
+        app.state.task_services = task_services
         app.state.backend = cast(ModelBackend, engine.backend)
         app.state.webui_dark = args.theme == "dark"
         app.state.webui_status = SystemStatus(
@@ -465,6 +559,8 @@ def main() -> None:
         )
     finally:
         # 统一释放全部后端资源
+        for backend in task_backends:
+            backend.close()
         if asr_backend is not None:
             asr_backend.close()
         if tts_backend is not None:

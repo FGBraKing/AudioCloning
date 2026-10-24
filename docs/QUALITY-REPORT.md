@@ -186,3 +186,36 @@ v0.3.0          接入 T2A/A2A/分类/VAD 真实后端；零落盘内存缓冲�
 ```
 
 > 注：本报告**适用版本标注为 v0.2.6**；分析基线为代码基线 v0.2.4（tag）。§9 中 **P1 全部 4 项 + P2 全部（除真实后端）已实施落地**，剩余 P2 仅「真实模型后端接入」。
+
+---
+
+## 11. v0.3.0 架构变更附注（2026-10-25）
+
+> 本节为 **v0.3.0 的架构级变更记录**（非完整复审；分析基线仍为上文 v0.2.6）。
+> v0.2.6 遗留的 P2 项「真实后端接入」在本版**落地**。
+
+### 11.1 新增架构组件
+
+| 组件 | 职责 | 评价 |
+|------|------|------|
+| `core/runtime.py` | 硬件/系统探测 → 推理框架（mlx / tensorrt-llm / onnx），统一内存与显存容量降级，进程内缓存 | 框架映射与候选链单源；探测只做存在性检查、不 import 重依赖 |
+| `core/model_manager.py` | 模型状态查询 + 主动下载（CLI 与 REST API 共用；HF 优先失败回退 ModelScope） | 下载与加载彻底分离：加载只做离线查找 |
+| `utils/model_path.py` | 模型路径解析（自定义目录 → HF 缓存 → ModelScope 目录，`local_files_only`） | 缺失报可读错误并附下载指引 |
+| `model_loader.create_service(kind)` | 六任务统一服务工厂（后端 auto 解析 + 构造期能力校验），模型惰性加载 | 启动零权重开销 |
+| sherpa-onnx 后端 ×3 | CPU/AMD GPU 平台 ASR/TTS/VAD（SenseVoice/Kokoro/Silero，int8），可选依赖组 `onnx` | 替代已移除的 llama.cpp 路线 |
+| TensorRT Edge-LLM 后端 ×3 | NVIDIA 平台 TTS（Qwen3-TTS 三变体推理步封装；导出/构建由用户离线执行） | 模式语义与 MLX 侧一致 |
+
+### 11.2 关键决策记录
+
+- **推理框架收敛**：mac→MLX；NVIDIA→TensorRT Edge-LLM（TTS 真实路径）；AMD GPU 与无 GPU→sherpa-onnx。
+  llama.cpp（仅能跑 ASR 类，语言模型定位）与 vLLM（仅音频理解）经调研后**整体移除**。
+- **模型选型原则**：8bit 量化（或非 LLM 极小模型）、参数量 ≤3B 为基线（T2A 音乐经决策放宽至
+  MiniMax-Music3）；优先 mlx_audio 源码内置/已核实存在的仓库；默认不下载权重。
+- **可用性兜底**：auto 后端选择离线检查候选模型就位情况，真实后端间自动降级，绝不静默退化 dummy。
+- **六任务槽位**：`ModelSlot` 扩展为 tts/asr/t2a/a2a/classification/vad，各槽位单模型。
+
+### 11.3 质量现状（v0.3.0）
+
+- 单元测试 266 个（全绿），ruff 全绿；sherpa-onnx / TensorRT 后端以假模块/假进程覆盖调用契约
+  （本机无对应硬件，真实运行时验证待部署后补）。
+- 文档单一来源同步：README / USER-GUIDE / CHANGELOG（[v0.3.0]）/ 本附注。

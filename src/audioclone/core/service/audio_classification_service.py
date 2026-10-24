@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from audioclone.core.capabilities import AudioClassificationCapability
@@ -18,6 +19,8 @@ class AudioClassificationService:
                 "(AudioClassificationCapability)"
             )
         self.backend = backend
+        # 推理互斥锁：后端模型非线程安全，API 线程池并发下保护
+        self._lock = threading.RLock()
 
     def classify(
         self,
@@ -37,4 +40,5 @@ class AudioClassificationService:
         """
         if not Path(audio_path).exists():
             raise InvalidAudioInput(f"音频文件不存在: {audio_path}")
-        return self.backend.classify(audio_path, top_k=top_k, **kwargs)
+        with self._lock:
+            return self.backend.classify(audio_path, top_k=top_k, **kwargs)

@@ -18,10 +18,10 @@ os.environ.pop("all_proxy", None)
 
 @pytest.fixture(scope="session")
 def tts_model_dir() -> str:
-    """可用的 TTS 模型目录；未下载则跳过集成测试。"""
-    from audioclone.config import QWEN3_TTS_MODEL_DIR, QWEN3_TTS_MODEL_IDS
+    """可用的 TTS 模型目录（本地 pretrained_models）；未下载则跳过集成测试。"""
+    from audioclone.config import PROJECT_ROOT, QWEN3_TTS_MODEL_IDS
 
-    model_dir = QWEN3_TTS_MODEL_DIR / "qwen3_tts_base"
+    model_dir = PROJECT_ROOT / "pretrained_models" / "qwen3_tts_base"
     if not model_dir.exists():
         pytest.skip(
             f"TTS 模型目录不存在，请先运行: "
@@ -34,9 +34,9 @@ def tts_model_dir() -> str:
 @pytest.fixture(scope="session")
 def tts_instruct_dir() -> str:
     """支持 instruct 模式的 CustomVoice 模型目录；未下载则跳过集成测试。"""
-    from audioclone.config import QWEN3_TTS_MODEL_DIR, QWEN3_TTS_MODEL_IDS
+    from audioclone.config import PROJECT_ROOT, QWEN3_TTS_MODEL_IDS
 
-    model_dir = QWEN3_TTS_MODEL_DIR / "qwen3_tts_custom_voice"
+    model_dir = PROJECT_ROOT / "pretrained_models" / "qwen3_tts_custom_voice"
     if not model_dir.exists():
         pytest.skip(
             f"CustomVoice 模型目录不存在，请先运行: "
@@ -48,7 +48,13 @@ def tts_instruct_dir() -> str:
 
 @pytest.fixture(scope="session")
 def asr_ready() -> bool:
-    """ASR 后端是否具备模型文件。"""
+    """ASR 后端是否具备模型文件（sherpa-onnx；未安装/未下载则跳过集成测试）。"""
     from audioclone.core import ASRService, create_asr_backend
 
-    return ASRService(create_asr_backend()).is_model_available
+    backend = create_asr_backend("sherpa-asr-onnx")
+    if not backend.is_model_available:
+        pytest.skip(
+            "ASR 模型未就位（需 uv sync --extra onnx 并下载 "
+            "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17）"
+        )
+    return ASRService(backend).is_model_available

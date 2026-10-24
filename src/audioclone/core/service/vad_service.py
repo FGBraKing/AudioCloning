@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from audioclone.core.capabilities import VoiceActivityCapability
@@ -18,6 +19,8 @@ class VoiceActivityService:
                 "(VoiceActivityCapability)"
             )
         self.backend = backend
+        # 推理互斥锁：后端模型非线程安全，API 线程池并发下保护
+        self._lock = threading.RLock()
 
     def vad(self, audio_path: str, **kwargs) -> list[tuple[float, float]]:
         """检测语音活动片段。
@@ -31,4 +34,5 @@ class VoiceActivityService:
         """
         if not Path(audio_path).exists():
             raise InvalidAudioInput(f"音频文件不存在: {audio_path}")
-        return self.backend.vad(audio_path, **kwargs)
+        with self._lock:
+            return self.backend.vad(audio_path, **kwargs)

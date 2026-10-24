@@ -23,6 +23,8 @@ from audioclone.core.service.audio_classification_service import AudioClassifica
 from audioclone.core.service.audio_to_audio_service import AudioToAudioService
 from audioclone.core.service.model_loader import (
     create_asr_backend,
+    create_backend,
+    create_service,
     create_tts_backend,
     list_backend_capabilities,
 )
@@ -50,6 +52,8 @@ __all__ = [
     "VoiceActivityCapability",
     "VoiceActivityService",
     "create_asr_backend",
+    "create_backend",
+    "create_service",
     "create_tts_backend",
     "list_backend_capabilities",
     "model_slots",

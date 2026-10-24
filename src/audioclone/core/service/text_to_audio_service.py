@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 
 from audioclone.core.capabilities import TextToAudioCapability
@@ -18,6 +20,8 @@ class TextToAudioService:
                 "(TextToAudioCapability)"
             )
         self.backend = backend
+        # 推理互斥锁：后端模型非线程安全，API 线程池并发下保护
+        self._lock = threading.RLock()
         self.sample_rate = getattr(backend, "sample_rate", None)
 
     def generate(self, text: str, duration_sec: float | None = None, **kwargs) -> np.ndarray:
@@ -33,4 +37,5 @@ class TextToAudioService:
         """
         if not text or not text.strip():
             raise InvalidAudioInput("文本提示为空")
-        return self.backend.text_to_audio(text, duration_sec=duration_sec, **kwargs)
+        with self._lock:
+            return self.backend.text_to_audio(text, duration_sec=duration_sec, **kwargs)

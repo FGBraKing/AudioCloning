@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,8 @@ class ASRService:
                 "(SpeechRecognitionCapability)"
             )
         self.backend = backend
+        # 推理互斥锁：后端模型非线程安全，API 线程池并发下保护
+        self._lock = threading.RLock()
 
     # ─── 模型能力查询 ────────────────────────────────────────
     @property
@@ -68,7 +71,8 @@ class ASRService:
         if not self.backend.is_ready():
             raise BackendUnavailable("ASR 服务未就绪，请等待模型加载完成")
 
-        return self.backend.transcribe(audio_path)
+        with self._lock:
+            return self.backend.transcribe(audio_path)
 
     # ─── 上下文管理器 ────────────────────────────────────────
     def __enter__(self) -> ASRService:
