@@ -79,7 +79,9 @@ def test_detect_runtime_cached(monkeypatch, caplog):
 # ─── 候选链：框架 → 候选 + 兜底 ──────────────────────────────
 def test_candidates_mlx_macos(monkeypatch):
     _patch_env(monkeypatch, "Darwin", "arm64")
-    assert auto_backend_candidates("tts") == ["qwen3-tts-base-mlx", "dummy"]
+    assert auto_backend_candidates("tts") == [
+        "qwen3-tts-base-mlx", "chatterbox-mlx", "spark-mlx", "dummy",
+    ]
     assert auto_backend_candidates("asr") == ["qwen3-asr-mlx", "dummy"]
 
 

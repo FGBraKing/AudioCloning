@@ -84,6 +84,7 @@ def _register_defaults() -> None:
     mlx-community 仓库（不自实现、不猜仓库 ID）。默认不下载权重。
     分类经用户决策采用 mlx_audio 原生 SenseVoice（情感+事件，一模型多任务），不引入 torch。
     """
+    from audioclone.core.backends.chatterbox_mlx import ChatterboxMLXBackend
     from audioclone.core.backends.deepfilternet_mlx import DeepFilterNetMLXBackend
     from audioclone.core.backends.dummy import DummyASRBackend, DummyOmnibackend, DummyTTSBackend
     from audioclone.core.backends.minimax_music_mlx import MiniMaxMusicMLXBackend
@@ -103,6 +104,7 @@ def _register_defaults() -> None:
     from audioclone.core.backends.sherpa_tts_onnx import SherpaTTSOnnxBackend
     from audioclone.core.backends.sherpa_vad_onnx import SherpaVADOnnxBackend
     from audioclone.core.backends.silero_vad_mlx import SileroVADMLXBackend
+    from audioclone.core.backends.spark_mlx import SparkMLXBackend
 
     registry.register("qwen3-asr-mlx", Qwen3AsrMLXBackend)
     registry.register("minimax-music-mlx", MiniMaxMusicMLXBackend)
@@ -115,6 +117,8 @@ def _register_defaults() -> None:
     registry.register("qwen3-tts-base-mlx", Qwen3TTSBaseMLXBackend)
     registry.register("qwen3-tts-customvoice-mlx", Qwen3TTSCustomVoiceMLXBackend)
     registry.register("qwen3-tts-voicedesign-mlx", Qwen3TTSVoiceDesignMLXBackend)
+    registry.register("chatterbox-mlx", ChatterboxMLXBackend)
+    registry.register("spark-mlx", SparkMLXBackend)
     registry.register("qwen3-tts-base-tensorrt", Qwen3TTSBaseTensorRTBackend)
     registry.register("qwen3-tts-customvoice-tensorrt", Qwen3TTSCustomVoiceTensorRTBackend)
     registry.register("qwen3-tts-voicedesign-tensorrt", Qwen3TTSVoiceDesignTensorRTBackend)

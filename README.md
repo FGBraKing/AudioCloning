@@ -173,6 +173,8 @@ uv run audioclone-api
 | `qwen3-tts-voicedesign-mlx` | `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit` | 指令控制（自然语言造音色） |
 | `sherpa-tts-onnx` | Kokoro-82M int8 | plain（纯文本直读） |
 | `qwen3-tts-base-tensorrt` / `-customvoice-` / `-voicedesign-` | Qwen3-TTS（TensorRT Edge-LLM 引擎，用户构建） | base: 克隆；customvoice/voicedesign: instruct |
+| `chatterbox-mlx` | Chatterbox-Turbo 0.5B（8bit） | zero_shot（克隆）/ plain；**exaggeration 情感强度旋钮** |
+| `spark-mlx` | Spark-TTS 0.5B（8bit，CC BY-NC-SA 非商用） | zero_shot（克隆，需参考音频） |
 | `dummy` / `dummy-omni` | 无（伪模型） | 全部 |
 
 切换示例（下载对应模型后再启动）：
@@ -416,6 +418,8 @@ uv run pytest
 | MiniMax-Music3-8bit | T2A 音乐生成（`minimax-music-mlx`；参数量放宽例外，约 14GB） | MLX (8bit) | mlx-community（已确认存在） |
 | DeepFilterNet-mlx | A2A 语音增强/降噪（`deepfilternet-mlx`，约数 MB） | MLX | mlx-community（mlx_audio 源码内置） |
 | silero-vad-v6 | VAD 语音活动检测（`silero-vad-mlx`，约 2MB，MIT） | MLX | mlx-community（已确认存在） |
+| Chatterbox-Turbo 0.5B-8bit | TTS 情感控制 + 零样本克隆（`chatterbox-mlx`） | MLX (8bit) | mlx-community（已核实） |
+| Spark-TTS-0.5B-8bit | TTS 克隆质量备选（`spark-mlx`；**非商用许可**） | MLX (8bit) | mlx-community（已核实） |
 | SenseVoiceSmall | 音频分类：情感 9 类 + 事件 4 类（`sensevoice-mlx`，234M） | MLX | mlx-community（已确认存在，mlx_audio 原生） |
 
 **模型选型原则**：默认模型仅选 **8bit 量化（或非 LLM 极小模型）、较新较强**的小模型，

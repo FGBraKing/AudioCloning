@@ -5,6 +5,16 @@
 
 ## [v0.3.0] - 2026-10-25
 
+### 变更（TTS 克隆备选接入：Chatterbox / Spark）
+- 新增 `chatterbox-mlx` 后端（`mlx-community/chatterbox-turbo-8bit`，已核实标注上游
+  mlx-audio）：**exaggeration 情感强度旋钮**（0~2，构造参数）+ 零样本克隆；
+  无参考音频时支持 `plain` 模式（预置默认音色直读）
+- 新增 `spark-mlx` 后端（`mlx-community/Spark-TTS-0.5B-8bit`）：零样本克隆
+  （参考音频必填）；**许可 CC BY-NC-SA 4.0（非商用）**，文档与 config 注明
+- mlx 框架 TTS 候选链扩展为 `["qwen3-tts-base-mlx", "chatterbox-mlx", "spark-mlx",
+  "dummy"]`（默认首选不变，`--tts-backend` 可切换）；权重默认不下载
+- 新增 8 个后端单测（身份/注册/克隆参数传递/plain 无参考/Spark 必填校验/单结果收集）
+
 ### 变更（TensorRT 适配落地：Edge-LLM Qwen3-TTS 推理步封装）
 - 新增 `qwen3-tts-{base,customvoice,voicedesign}-tensorrt` 三后端（`core/backends/
   qwen3_tts_tensorrt.py`），对接 **TensorRT Edge-LLM 官方 Qwen3-TTS 流水线**：

@@ -52,7 +52,7 @@ ACCELERATOR_FRAMEWORK: dict[str, str] = {
 #: 为 TensorRT-LLM / vLLM 后端预留命名位，接入后无需改动本模块）
 FRAMEWORK_BACKEND_CANDIDATES: dict[str, dict[str, list[str]]] = {
     "mlx": {
-        "tts": ["qwen3-tts-base-mlx"],
+        "tts": ["qwen3-tts-base-mlx", "chatterbox-mlx", "spark-mlx"],
         "asr": ["qwen3-asr-mlx"],
         "t2a": ["minimax-music-mlx"],  # 参数量放宽的例外（唯一有 8bit 的音乐生成）
         "a2a": ["deepfilternet-mlx"],

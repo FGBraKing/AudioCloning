@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -40,7 +42,8 @@ class _FakeQwen3TTSModel:
         self.calls: list[tuple[str, dict]] = []
 
     # ─── 三个生成入口 ────────────────────────────────────────
-    def generate(self, **kwargs):
+    def generate(self, text=None, **kwargs):
+        kwargs["text"] = text  # 兼容位置传参（chatterbox）与关键字传参（qwen3）
         self.calls.append(("generate", kwargs))
         yield _Result(SAMPLE_RATE)
 
@@ -78,10 +81,12 @@ def _assume_mlx_support(monkeypatch):
 @pytest.fixture(autouse=True)
 def _stub_model_resolution(monkeypatch, tmp_path):
     """模型解析返回本地临时目录：单元测试绝不触发 HF 缓存解析/网络下载。"""
-    monkeypatch.setattr(
-        "audioclone.core.backends.qwen3_tts_mlx.resolve_model_dir",
-        lambda model_id, model_dir: tmp_path,
-    )
+    for mod in (
+        "audioclone.core.backends.qwen3_tts_mlx",
+        "audioclone.core.backends.chatterbox_mlx",
+        "audioclone.core.backends.spark_mlx",
+    ):
+        monkeypatch.setattr(f"{mod}.resolve_model_dir", lambda model_id, model_dir: tmp_path)
 
 
 def _attach(backend: Qwen3TTSMLXBackend, model: _FakeQwen3TTSModel) -> Qwen3TTSMLXBackend:
@@ -327,3 +332,98 @@ def test_service_allows_supported_mode(tmp_path, monkeypatch):
         filename="design.wav",
     )
     assert (tmp_path / "design.wav").exists()
+
+
+# ─── Chatterbox / Spark（克隆备选，模型仓库已核实） ──────────
+def test_chatterbox_identity_and_modes():
+    from audioclone.core.backends.chatterbox_mlx import ChatterboxMLXBackend
+
+    backend = ChatterboxMLXBackend()
+    assert backend.name == "chatterbox-mlx"
+    assert backend.model_id == "mlx-community/chatterbox-turbo-8bit"
+    assert backend.supported_modes == ("zero_shot", "plain")
+    assert backend.exaggeration == 0.5
+    assert backend.slot is ModelSlot.TTS
+
+
+def test_chatterbox_registered():
+    from audioclone.core.backends.registry import registry
+
+    assert "chatterbox-mlx" in registry.names()
+    assert "spark-mlx" in registry.names()
+
+
+def test_chatterbox_zero_shot_passes_ref_and_exaggeration():
+    from audioclone.core.backends.chatterbox_mlx import ChatterboxMLXBackend
+
+    model = _FakeQwen3TTSModel()  # 复用：generate 生成器 + calls 记录
+    backend = _attach(ChatterboxMLXBackend(exaggeration=0.8), model)
+    audio = backend.synthesize("zero_shot", "你好", "ref.wav")
+    assert audio.dtype == np.float32
+    entry, kwargs = model.last
+    assert entry == "generate"
+    assert kwargs["ref_audio"] == "ref.wav"
+    assert kwargs["exaggeration"] == 0.8
+
+
+def test_chatterbox_plain_without_ref():
+    from audioclone.core.backends.chatterbox_mlx import ChatterboxMLXBackend
+
+    model = _FakeQwen3TTSModel()
+    backend = _attach(ChatterboxMLXBackend(), model)
+    backend.synthesize("plain", "你好")
+    _, kwargs = model.last
+    assert kwargs["ref_audio"] is None  # plain：预置默认音色
+
+
+def test_chatterbox_rejects_instruct():
+    from audioclone.core.backends.chatterbox_mlx import ChatterboxMLXBackend
+
+    model = _FakeQwen3TTSModel()
+    backend = _attach(ChatterboxMLXBackend(), model)
+    with pytest.raises(InvalidAudioInput) as ei:
+        backend.synthesize("instruct", "你好", instruct_text="开心")
+    assert "仅支持推理模式" in str(ei.value)
+    assert "exaggeration" in str(ei.value)
+
+
+def test_spark_identity_and_nc_license_note():
+    from audioclone.core.backends.spark_mlx import SparkMLXBackend
+
+    backend = SparkMLXBackend()
+    assert backend.name == "spark-mlx"
+    assert backend.model_id == "mlx-community/Spark-TTS-0.5B-8bit"
+    assert backend.supported_modes == ("zero_shot",)  # 需参考音频（CC BY-NC-SA，非商用）
+
+
+def test_spark_requires_ref_audio():
+    from audioclone.core.backends.spark_mlx import SparkMLXBackend
+
+    model = _FakeQwen3TTSModel()
+    backend = _attach(SparkMLXBackend(), model)
+    with pytest.raises(InvalidAudioInput) as ei:
+        backend.synthesize("zero_shot", "你好", ref_audio_path="")
+    assert "参考音频" in str(ei.value)
+
+
+def test_spark_zero_shot_passes_ref(monkeypatch, tmp_path):
+    """Spark 的 generate 返回单结果（非生成器）：单/多结果统一收集。"""
+    from audioclone.core.backends.spark_mlx import SparkMLXBackend
+
+    class _Single:
+        audio = np.ones(50, dtype=np.float32)
+
+    captured = {}
+
+    class _SparkModel:
+        sample_rate = SAMPLE_RATE
+
+        def generate(self, text, **kwargs):
+            captured.update(kwargs)
+            return _Single()
+
+    backend = _attach(SparkMLXBackend(), _SparkModel())
+    audio = backend.synthesize("zero_shot", "你好", "ref.wav", ref_text="转录")
+    assert len(audio) == 50
+    assert captured["ref_audio"] == Path("ref.wav")
+    assert captured["ref_text"] == "转录"

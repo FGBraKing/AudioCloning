@@ -183,6 +183,16 @@ TTS_BACKENDS: dict[str, dict[str, Any]] = {
         "model_id": QWEN3_TTS_MODEL_IDS["voice_design"],
         "model_dir": settings.tensorrt_engine_dir,
     },
+    # 情感控制 + 克隆备选（社区口碑标杆；Chatterbox Turbo 标注上游 mlx-audio）
+    "chatterbox-mlx": {
+        "model_id": "mlx-community/chatterbox-turbo-8bit",
+        "model_dir": settings.tts_model_dir,
+    },
+    # 克隆质量备选；许可 CC BY-NC-SA 4.0（非商用），商用部署前需核实
+    "spark-mlx": {
+        "model_id": "mlx-community/Spark-TTS-0.5B-8bit",
+        "model_dir": settings.tts_model_dir,
+    },
 }
 
 ASR_BACKENDS: dict[str, dict[str, Any]] = {
