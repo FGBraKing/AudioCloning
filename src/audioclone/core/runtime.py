@@ -59,18 +59,23 @@ FRAMEWORK_BACKEND_CANDIDATES: dict[str, dict[str, list[str]]] = {
         "classification": ["sensevoice-mlx"],  # mlx_audio 原生情感+事件分类
         "vad": ["silero-vad-mlx"],
     },
+    # 说明：onnx 框架（AMD/无 GPU）的 a2a/classification 候选在本文件下方 onnx 键中
     "tensorrt-llm": {
-        # TTS 真实路径：TensorRT Edge-LLM 官方 Qwen3-TTS 三变体流水线（引擎由用户构建）
+        # TTS：Edge-LLM 官方 Qwen3-TTS 三变体流水线（引擎由用户构建）；
+        # 其余任务走 sherpa-onnx（onnxruntime CUDA EP，GPU 加速）
         "tts": ["qwen3-tts-base-tensorrt"],
-        "asr": [],   # Qwen3-ASR 无 TensorRT 实现（Whisper/Nemotron 为替代模型，未接入）
+        "asr": ["sherpa-asr-onnx"],
+        "a2a": ["sherpa-denoise-onnx"],
+        "classification": ["sherpa-cls-onnx"],
+        "vad": ["sherpa-vad-onnx"],
     },
     "onnx": {
         # sherpa-onnx（onnxruntime）：音频专用推理全家桶，int8 模型 CPU 佳
         "tts": ["sherpa-tts-onnx"],    # Kokoro-82M int8（纯文本合成，plain 模式）
         "asr": ["sherpa-asr-onnx"],    # SenseVoice int8
         "t2a": [],                     # 音乐生成无 onnx 等价物 → 兜底 dummy
-        "a2a": [],                     # 语音增强模型下载点未核实 → 兜底 dummy
-        "classification": [],          # 音频标注模型下载点未核实 → 兜底 dummy
+        "a2a": ["sherpa-denoise-onnx"],      # GTCRN（GitHub Release 分发）
+        "classification": ["sherpa-cls-onnx"],  # CED（AudioSet 527 类）
         "vad": ["sherpa-vad-onnx"],    # Silero VAD onnx
     },
 }

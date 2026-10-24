@@ -40,7 +40,11 @@ from audioclone.core.service.audio_to_audio_service import AudioToAudioService
 from audioclone.core.service.text_to_audio_service import TextToAudioService
 from audioclone.core.service.tts_service import TTSService
 from audioclone.core.service.vad_service import VoiceActivityService
-from audioclone.utils.model_path import find_cached_model, find_modelscope_model
+from audioclone.utils.model_path import (
+    find_cached_model,
+    find_github_model,
+    find_modelscope_model,
+)
 
 #: 任务类型 → 业务服务类（create_service 的分派表）
 KIND_SERVICE_OF: dict[str, type] = {
@@ -134,7 +138,9 @@ def _backend_model_available(kind: str, name: str) -> bool:
     spec = _config_for(kind).get(name, {})
     model_id = spec.get("model_id")
     if not model_id:
-        return True
+        if spec.get("github_release"):
+            return find_github_model(spec) is not None  # 引擎/权重未就位 → 走下载指引
+        return True  # dummy 等无模型后端
     custom_dir = spec.get("model_dir")
     if custom_dir and Path(custom_dir).expanduser().exists():
         return True

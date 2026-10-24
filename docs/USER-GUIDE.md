@@ -107,7 +107,7 @@ TTS_BACKENDS["my-tts"] = {"model_id": "my-org/my-model"}
 |------|----------|---------|:---:|:---:|
 | Text-to-Speech | `TextToSpeechCapability` | `TTSService` | ✅ qwen3_tts_mlx（三变体） | dummy / dummy-omni |
 | Text-to-Audio | `TextToAudioCapability` | `TextToAudioService` | 待接入 | dummy-omni |
-| Speech-Recognition | `SpeechRecognitionCapability` | `ASRService` | ✅ qwen3_asr_mlx / sherpa_asr_onnx | dummy-omni |
+| Speech-Recognition | `SpeechRecognitionCapability` | `ASRService` | ✅ qwen3_asr_mlx / sherpa_asr_onnx（cls: sensevoice_mlx / sherpa_cls_onnx；a2a: deepfilternet_mlx / sherpa_denoise_onnx） | dummy-omni |
 | Audio-to-Audio | `AudioToAudioCapability` | `AudioToAudioService` | 待接入 | dummy-omni |
 | Audio-Classification | `AudioClassificationCapability` | `AudioClassificationService` | 待接入 | dummy-omni |
 | Voice-Activity-Detection | `VoiceActivityCapability` | `VoiceActivityService` | 待接入 | dummy-omni |

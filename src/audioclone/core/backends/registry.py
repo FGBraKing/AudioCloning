@@ -101,6 +101,8 @@ def _register_defaults() -> None:
     )
     from audioclone.core.backends.sensevoice_mlx import SenseVoiceMLXBackend
     from audioclone.core.backends.sherpa_asr_onnx import SherpaASROnnxBackend
+    from audioclone.core.backends.sherpa_cls_onnx import SherpaClsOnnxBackend
+    from audioclone.core.backends.sherpa_denoise_onnx import SherpaDenoiseOnnxBackend
     from audioclone.core.backends.sherpa_tts_onnx import SherpaTTSOnnxBackend
     from audioclone.core.backends.sherpa_vad_onnx import SherpaVADOnnxBackend
     from audioclone.core.backends.silero_vad_mlx import SileroVADMLXBackend
@@ -113,6 +115,8 @@ def _register_defaults() -> None:
     registry.register("sherpa-asr-onnx", SherpaASROnnxBackend)
     registry.register("sherpa-tts-onnx", SherpaTTSOnnxBackend)
     registry.register("sherpa-vad-onnx", SherpaVADOnnxBackend)
+    registry.register("sherpa-cls-onnx", SherpaClsOnnxBackend)
+    registry.register("sherpa-denoise-onnx", SherpaDenoiseOnnxBackend)
     registry.register("sensevoice-mlx", SenseVoiceMLXBackend)
     registry.register("qwen3-tts-base-mlx", Qwen3TTSBaseMLXBackend)
     registry.register("qwen3-tts-customvoice-mlx", Qwen3TTSCustomVoiceMLXBackend)

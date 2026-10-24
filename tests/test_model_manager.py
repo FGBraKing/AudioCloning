@@ -239,3 +239,48 @@ def test_find_cached_model_hits_cache(monkeypatch, tmp_path):
     )
     assert model_path.find_cached_model("some/model") == tmp_path
     assert seen["kw"].get("local_files_only") is True  # 离线查找，不触网
+
+
+# ─── GitHub Release 分发（GTCRN 增强） ───────────────────────
+def test_download_github_release(monkeypatch, tmp_path):
+    """github_release spec：auto 来源直接走 GitHub 下载，落盘 pretrained_models/<资产主名>/。"""
+    seen = {}
+
+    def fake_download(spec):
+        from pathlib import Path as _P
+
+        gh = spec["github_release"]
+        target = _P(spec["model_dir"]) if spec.get("model_dir") else None
+        seen["asset"] = gh["asset"]
+        if target is None:
+            target = _P("/tmp/na")
+        target.mkdir(parents=True, exist_ok=True)
+        (target / gh["asset"]).touch()
+        return target / gh["asset"]
+
+    monkeypatch.setattr(model_manager, "download_github_release_asset", fake_download)
+    result = model_manager.download_model("a2a", "sherpa-denoise-onnx", str(tmp_path / "m"))
+    assert result["status"] == "completed"
+    assert result["source"] == "github"
+    assert seen["asset"] == "gtcrn_simple.onnx"
+    assert (tmp_path / "m" / "gtcrn_simple.onnx").exists()
+
+
+def test_download_github_forced_hf_raises():
+    with pytest.raises(ValueError) as ei:
+        model_manager.download_model("a2a", "sherpa-denoise-onnx", source="hf")
+    assert "GitHub Release" in str(ei.value)
+
+
+def test_status_github_cached(monkeypatch, tmp_path):
+    """github_release spec：本地目录含 .onnx 即 cached=True。"""
+    monkeypatch.setattr(model_manager, "find_github_model", lambda spec: tmp_path)
+    status = model_manager.model_status("a2a", "sherpa-denoise-onnx")
+    assert status["cached"] is True
+    assert status["downloadable"] is True
+
+
+def test_status_github_uncached(monkeypatch):
+    monkeypatch.setattr(model_manager, "find_github_model", lambda spec: None)
+    status = model_manager.model_status("a2a", "sherpa-denoise-onnx")
+    assert status["cached"] is False

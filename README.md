@@ -313,7 +313,7 @@ NVIDIA 平台 TTS 对接 **TensorRT Edge-LLM 官方 Qwen3-TTS 流水线**（三�
 2. **构建**（目标设备）：`llm_build` / `audio_build` 生成 TensorRT 引擎
 3. **推理**（`qwen3-tts-*-tensorrt` 后端封装）：以 `--model_dir` 指向引擎目录，后端调用 `qwen3_tts_inference` 子进程产出 WAV
 
-未提供引擎目录时加载报可操作指引（不猜测、不下载）；ASR/T2A/A2A/分类/VAD 在该平台无 TensorRT 实现，回退 dummy。
+未提供引擎目录时加载报可操作指引（不猜测、不下载）；ASR/VAD/分类/增强走 sherpa-onnx（**onnxruntime CUDA EP，GPU 加速**），仅 T2A 音乐回退 dummy。
 
 ## onnx 平台（AMD GPU / 无 GPU）
 
@@ -324,7 +324,9 @@ NVIDIA 平台 TTS 对接 **TensorRT Edge-LLM 官方 Qwen3-TTS 流水线**（三�
 | ASR | `sherpa-asr-onnx` | [`csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17`](https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17)：`model.int8.onnx` + `tokens.txt` |
 | TTS（plain 模式） | `sherpa-tts-onnx` | [`csukuangfj/kokoro-int8-multi-lang-v1_1`](https://huggingface.co/csukuangfj/kokoro-int8-multi-lang-v1_1)：`model.int8.onnx` + `voices.bin` + `tokens.txt` + `espeak-ng-data/`（82M 参数，中/英） |
 | VAD | `sherpa-vad-onnx` | [`onnx-community/silero-vad`](https://huggingface.co/onnx-community/silero-vad)（约 2MB） |
-| T2A / A2A / 分类 | dummy | 下载点未核实（T2A 音乐无 onnx 等价物；A2A 增强/音频标注待接入） |
+| 分类 | `sherpa-cls-onnx` | [`k2-fsa/sherpa-onnx-ced-small-audio-tagging-2024-04-19`](https://huggingface.co/k2-fsa/sherpa-onnx-ced-small-audio-tagging-2024-04-19)：`model.int8.onnx` + `class_labels_indices.csv`（CED-Small ~92M，AudioSet 527 类） |
+| A2A（增强） | `sherpa-denoise-onnx` | [`gtcrn_simple.onnx`](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models)（GTCRN ~236K；**GitHub Release 分发**，下载自动处理） |
+| T2A 音乐 | dummy | 音乐生成无 onnx 等价物 |
 
 > 依赖：`uv sync --extra onnx`；模型默认**不下载**，主动下载后自动命中。
 
@@ -420,6 +422,8 @@ uv run pytest
 | silero-vad-v6 | VAD 语音活动检测（`silero-vad-mlx`，约 2MB，MIT） | MLX | mlx-community（已确认存在） |
 | Chatterbox-Turbo 0.5B-8bit | TTS 情感控制 + 零样本克隆（`chatterbox-mlx`） | MLX (8bit) | mlx-community（已核实） |
 | Spark-TTS-0.5B-8bit | TTS 克隆质量备选（`spark-mlx`；**非商用许可**） | MLX (8bit) | mlx-community（已核实） |
+| CED-Small（AudioSet 527 类） | 通用音频事件分类（`sherpa-cls-onnx`） | ONNX int8 | k2-fsa（官方） |
+| GTCRN | 语音增强/降噪（`sherpa-denoise-onnx`，~236K） | ONNX | k2-fsa（GitHub Release） |
 | SenseVoiceSmall | 音频分类：情感 9 类 + 事件 4 类（`sensevoice-mlx`，234M） | MLX | mlx-community（已确认存在，mlx_audio 原生） |
 
 **模型选型原则**：默认模型仅选 **8bit 量化（或非 LLM 极小模型）、较新较强**的小模型，

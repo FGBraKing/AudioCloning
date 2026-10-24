@@ -16,15 +16,21 @@ from typing import Any
 
 from audioclone.config import PROJECT_ROOT
 from audioclone.core.service.model_loader import KIND_BACKENDS, resolve_backend_name
-from audioclone.utils.model_path import find_cached_model, find_modelscope_model, hf_endpoint
+from audioclone.utils.model_path import (
+    download_github_release_asset,
+    find_cached_model,
+    find_github_model,
+    find_modelscope_model,
+    hf_endpoint,
+)
 
 logger = logging.getLogger(__name__)
 
 #: 任务类型 → 后端覆盖参数表（单源 = model_loader.KIND_BACKENDS）
 TASK_BACKENDS: dict[str, dict[str, dict[str, Any]]] = KIND_BACKENDS
 
-#: 合法下载来源：auto=HF 优先失败回退 ModelScope；hf / modelscope 强制指定
-DOWNLOAD_SOURCES = ("auto", "hf", "modelscope")
+#: 合法下载来源：auto=按后端分发方式自动选择；hf/modelscope/github 强制指定
+DOWNLOAD_SOURCES = ("auto", "hf", "modelscope", "github")
 
 
 def _model_spec(task: str, backend: str | None) -> tuple[str, dict[str, Any]]:
@@ -50,7 +56,7 @@ def model_status(task: str, backend: str | None = None) -> dict[str, Any]:
         "task": task,
         "backend": name,
         "model_id": model_id,
-        "downloadable": model_id is not None,
+        "downloadable": model_id is not None or spec.get("github_release") is not None,
         "cached": None,
         "model_path": spec.get("model_dir"),
         "hf_endpoint": hf_endpoint(),
@@ -66,6 +72,12 @@ def model_status(task: str, backend: str | None = None) -> dict[str, Any]:
         status["cached"] = cached is not None
         if cached is not None:
             status["model_path"] = str(cached)
+    elif spec.get("github_release"):
+        # GitHub Release 分发（如 GTCRN 增强模型）
+        local = find_github_model(spec)
+        status["cached"] = local is not None
+        if local is not None:
+            status["model_path"] = str(local)
     return status
 
 
@@ -111,8 +123,9 @@ def download_model(
 ) -> dict[str, Any]:
     """主动下载指定任务后端的模型权重（阻塞直至完成，调用方负责放后台线程）。
 
-    - ``source="auto"``（默认）：先 HuggingFace（支持自定义镜像），失败自动回退
-      ModelScope；结果 ``source`` 字段为实际生效来源，``fallback=True`` 标记发生过回退；
+    - ``source="auto"``（默认）：按后端分发方式自动选择——HF 仓库走 HuggingFace
+      （支持自定义镜像，失败自动回退 ModelScope）；GitHub Release 分发的后端直接走
+      GitHub。结果 ``source`` 字段为实际生效来源，``fallback=True`` 标记发生过回退；
     - ``source="hf"`` / ``"modelscope"``：强制指定来源，失败原样上抛不回退。
 
     :raises KeyError: 未知任务/后端；:raises ValueError: 未知来源。
@@ -122,13 +135,31 @@ def download_model(
     if source not in DOWNLOAD_SOURCES:
         raise ValueError(f"未知下载来源: {source}（可选: {' / '.join(DOWNLOAD_SOURCES)}）")
     model_id = spec.get("model_id")
-    if not model_id:
+    gh = spec.get("github_release")
+
+    if not model_id and not gh:
         logger.info("后端 (%s) 无需下载模型", name)
         return {
             "task": task, "backend": name, "model_id": None,
             "source": source, "path": None, "status": "skipped",
         }
 
+    if gh:  # GitHub Release 分发（单资产文件）
+        if source in ("hf", "modelscope"):
+            raise ValueError(
+                f"后端 {name} 经 GitHub Release 分发（{gh['asset']}），"
+                "不支持 --source hf/modelscope；请使用默认来源（auto）或 --source github"
+            )
+        eff_spec = {**spec, "model_dir": local_dir} if local_dir else spec
+        path = download_github_release_asset(eff_spec).parent
+        logger.info("下载完成（来源 github）: %s", path)
+        return {
+            "task": task, "backend": name, "model_id": None,
+            "source": "github", "fallback": False, "path": str(path),
+            "status": "completed",
+        }
+
+    assert model_id is not None  # gh 分支已排除（model_id 与 github_release 二选一）
     fallback = False
     if source in ("auto", "hf"):
         try:

@@ -5,6 +5,20 @@
 
 ## [v0.3.0] - 2026-10-25
 
+### 变更（非 Mac 平台补全：sherpa-cls / sherpa-denoise 接入 + NVIDIA 全任务覆盖）
+- 新增 `sherpa-cls-onnx` 后端：**CED-Small 音频标注（AudioSet 527 类，~92M）**，
+  k2-fsa 官方 HF 仓库（已核实 `model.int8.onnx` + `class_labels_indices.csv`）——
+  此前放弃的 torch AST 方案以 sherpa-onnx 路线无 torch 达成
+- 新增 `sherpa-denoise-onnx` 后端：**GTCRN 语音增强（~236K）**，sherpa-onnx
+  `OfflineSpeechDenoiser`；模型经 **GitHub Release 分发**（不在 HF），下载管线新增
+  `github` 来源（`download_github_release_asset`，httpx 流式 + 可用性离线检查）
+- **NVIDIA 平台全任务覆盖**：tensorrt-llm 框架的 ASR/VAD/分类/增强候选改为
+  sherpa-onnx 后端（onnxruntime CUDA EP，GPU 加速），仅 T2A 音乐回退 dummy；
+  TTS 保持 Edge-LLM 优先
+- 分类/增强能力矩阵：mac→sensevoice-mlx/deepfilternet-mlx；CPU/AMD/NVIDIA→
+  sherpa-cls-onnx/sherpa-denoise-onnx
+- 新增 10 个单测（CED 分类/GTCRN 增强/GitHub 下载路由与状态）；mypy/ruff 全绿
+
 ### 变更（TTS 克隆备选接入：Chatterbox / Spark）
 - 新增 `chatterbox-mlx` 后端（`mlx-community/chatterbox-turbo-8bit`，已核实标注上游
   mlx-audio）：**exaggeration 情感强度旋钮**（0~2，构造参数）+ 零样本克隆；

@@ -235,15 +235,30 @@ A2A_BACKENDS: dict[str, dict[str, Any]] = {
         "model_id": "mlx-community/DeepFilterNet-mlx",   # mlx_audio 源码内置仓库 ID
         "model_dir": settings.a2a_model_dir,
     },
+    # 语音增强（非 Mac 平台默认）：GTCRN ~236K，GitHub Release 分发（不在 HF）
+    "sherpa-denoise-onnx": {
+        "model_id": None,
+        "model_dir": settings.a2a_model_dir,
+        "github_release": {
+            "repo": "k2-fsa/sherpa-onnx",
+            "tag": "speech-enhancement-models",
+            "asset": "gtcrn_simple.onnx",
+        },
+    },
     "dummy-omni": {
         "sample_rate": settings.sample_rate,
     },
 }
 
 CLASSIFICATION_BACKENDS: dict[str, dict[str, Any]] = {
-    # 情感分类即可满足需求（用户决策）：SenseVoice 内建情感+事件分类头，不引入 torch
+    # 情感+事件（用户决策）：SenseVoice 内建分类头（mac 默认）
     "sensevoice-mlx": {
         "model_id": "mlx-community/SenseVoiceSmall",
+        "model_dir": settings.classification_model_dir,
+    },
+    # 通用 AudioSet 527 类事件分类（k2-fsa 官方 HF 仓库，CED-Small ~92M）
+    "sherpa-cls-onnx": {
+        "model_id": "k2-fsa/sherpa-onnx-ced-small-audio-tagging-2024-04-19",
         "model_dir": settings.classification_model_dir,
     },
     "dummy-omni": {

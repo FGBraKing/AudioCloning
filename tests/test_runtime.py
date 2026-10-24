@@ -92,7 +92,8 @@ def test_candidates_cpu_only(monkeypatch):
     assert auto_backend_candidates("asr") == ["sherpa-asr-onnx", "dummy"]
     assert auto_backend_candidates("vad") == ["sherpa-vad-onnx", "dummy-omni"]
     assert auto_backend_candidates("t2a") == ["dummy-omni"]
-    assert auto_backend_candidates("a2a") == ["dummy-omni"]
+    assert auto_backend_candidates("a2a") == ["sherpa-denoise-onnx", "dummy-omni"]
+    assert auto_backend_candidates("classification") == ["sherpa-cls-onnx", "dummy-omni"]
 
 
 def test_candidates_nvidia_tts_uses_edge_llm_backend(monkeypatch):
@@ -101,8 +102,9 @@ def test_candidates_nvidia_tts_uses_edge_llm_backend(monkeypatch):
     candidates = auto_backend_candidates("tts")
     assert candidates[0] == "qwen3-tts-base-tensorrt"  # 框架专属候选在前
     assert candidates[-1] == "dummy"                  # 兜底在后
-    # ASR 无 TensorRT 实现 → 回退 dummy
-    assert auto_backend_candidates("asr") == ["dummy"]
+    # ASR/其余任务走 sherpa-onnx（onnxruntime CUDA EP，GPU 加速）
+    assert auto_backend_candidates("asr") == ["sherpa-asr-onnx", "dummy"]
+    assert auto_backend_candidates("classification") == ["sherpa-cls-onnx", "dummy-omni"]
 
 
 def test_candidates_unknown_task(monkeypatch):

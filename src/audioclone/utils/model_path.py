@@ -50,6 +50,57 @@ def find_modelscope_model(model_id: str) -> Path | None:
     return path if path.exists() else None
 
 
+def _github_local_dir(spec: dict) -> Path:
+    """GitHub Release 分发模型的默认本地目录：``pretrained_models/<资产主名>/``。"""
+    from audioclone.config import PROJECT_ROOT
+
+    gh = spec["github_release"]
+    stem = Path(gh["asset"]).stem  # gtcrn_simple.onnx -> gtcrn_simple
+    return Path(spec["model_dir"]).expanduser() if spec.get("model_dir") else (
+        PROJECT_ROOT / "pretrained_models" / stem
+    )
+
+
+def find_github_model(spec: dict) -> Path | None:
+    """查找 GitHub Release 分发的本地模型目录（存在即返回）。"""
+    if "github_release" not in spec:
+        return None
+    path = _github_local_dir(spec)
+    return path if path.exists() and any(path.iterdir()) else None
+
+
+def download_github_release_asset(spec: dict, local_dir: str | Path | None = None) -> Path:
+    """从 GitHub Release 下载单个资产文件（httpx 流式），返回模型目录。
+
+    资产 URL：``https://github.com/<repo>/releases/download/<tag>/<asset>``；
+    落盘 ``pretrained_models/<资产主名>/<asset>``（或 spec/参数指定的 model_dir）。
+    """
+    import httpx
+
+    gh = spec["github_release"]
+    url = f"https://github.com/{gh['repo']}/releases/download/{gh['tag']}/{gh['asset']}"
+    base = _github_local_dir(spec)
+    local_dir_path = Path(local_dir).expanduser() if local_dir else base
+    local_dir = local_dir_path
+    local_dir.mkdir(parents=True, exist_ok=True)
+    dest = local_dir / gh["asset"]
+
+    logger.info("正在从 GitHub 下载 %s ...", url)
+    try:
+        with httpx.stream("GET", url, timeout=300, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_bytes(1 << 20):
+                    f.write(chunk)
+    except httpx.HTTPError as e:
+        raise ModelLoadError(
+            f"从 GitHub 下载 {gh['asset']} 失败: {e}\n"
+            "  - 检查网络或配置代理；也可手动下载后放入 " + str(local_dir)
+        ) from e
+    logger.info("下载完成: %s", dest)
+    return local_dir
+
+
 def resolve_model_dir(model_id: str, model_dir: str | Path | None) -> Path:
     """解析模型目录：显式路径优先 → HF 系统缓存 → ModelScope 本地目录（不下载）。
 
