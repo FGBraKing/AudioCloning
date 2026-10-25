@@ -26,7 +26,7 @@ def test_status_real_backend_reports_cache_miss(monkeypatch):
     """未缓存时 cached=False，且不触发任何网络（find_cached_model 已离线）。"""
     monkeypatch.setattr(model_manager, "find_cached_model", lambda model_id: None)
     monkeypatch.setattr(model_manager, "find_modelscope_model", lambda model_id: None)
-    status = model_manager.model_status("asr")
+    status = model_manager.model_status("asr", "qwen3-asr-mlx")  # 显式指定（默认后端随平台变化）
     assert status["backend"] == "qwen3-asr-mlx"  # mac 默认 MLX ASR
     assert status["downloadable"] is True
     assert status["cached"] is False
@@ -35,9 +35,9 @@ def test_status_real_backend_reports_cache_miss(monkeypatch):
 def test_status_asr_requires_gguf_in_snapshot(monkeypatch, tmp_path):
     """ASR 快照缺 .gguf 时视为未就绪。"""
     monkeypatch.setattr(model_manager, "find_cached_model", lambda model_id: tmp_path)
-    assert model_manager.model_status("asr")["cached"] is False
+    assert model_manager.model_status("asr", "qwen3-asr-mlx")["cached"] is False
     (tmp_path / "model-q8_0.gguf").touch()
-    assert model_manager.model_status("asr")["cached"] is True
+    assert model_manager.model_status("asr", "qwen3-asr-mlx")["cached"] is True
 
 
 # ─── download_model：主动下载（stub 真实下载器） ─────────────
@@ -76,7 +76,7 @@ def test_download_hf_with_local_dir(monkeypatch, tmp_path):
         ) or str(local_dir),
     )
     target = tmp_path / "custom"
-    result = model_manager.download_model("asr", local_dir=str(target))
+    result = model_manager.download_model("asr", "qwen3-asr-mlx", local_dir=str(target))
     assert result["status"] == "completed"
     assert seen["local_dir"] == str(target)
     assert target.exists()
@@ -92,7 +92,7 @@ def test_download_modelscope_falls_back_to_pretrained(monkeypatch, tmp_path):
         lambda model_id, local_dir=None: seen.update(model_id=model_id, local_dir=local_dir),
     )
     monkeypatch.setattr(model_manager, "PROJECT_ROOT", tmp_path)
-    result = model_manager.download_model("asr", source="modelscope")
+    result = model_manager.download_model("asr", "qwen3-asr-mlx", source="modelscope")
     assert result["status"] == "completed"
     assert result["source"] == "modelscope"
     assert seen["local_dir"] == str(tmp_path / "pretrained_models" / "Qwen3-ASR-0.6B-8bit")
@@ -113,7 +113,7 @@ def test_download_auto_falls_back_to_modelscope_on_hf_failure(monkeypatch, tmp_p
         lambda model_id, local_dir=None: ms_seen.update(model_id=model_id, local_dir=local_dir),
     )
     monkeypatch.setattr(model_manager, "PROJECT_ROOT", tmp_path)
-    result = model_manager.download_model("asr")  # 默认 auto
+    result = model_manager.download_model("asr", "qwen3-asr-mlx")  # 默认 auto
     assert result["status"] == "completed"
     assert result["source"] == "modelscope"
     assert result["fallback"] is True
@@ -129,7 +129,7 @@ def test_download_hf_forced_source_does_not_fallback(monkeypatch):
         lambda *a, **kw: (_ for _ in ()).throw(ConnectionError("hf down")),
     )
     with pytest.raises(ConnectionError):
-        model_manager.download_model("asr", source="hf")
+        model_manager.download_model("asr", "qwen3-asr-mlx", source="hf")
 
 
 def test_download_unknown_source_raises():
