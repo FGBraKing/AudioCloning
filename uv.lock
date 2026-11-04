@@ -4,13 +4,16 @@ requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'linux'",
+    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version < '3.14' and sys_platform == 'emscripten'",
-    "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.14' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 
 [[package]]
@@ -235,6 +238,7 @@ dependencies = [
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "mlx" },
+    { name = "mlx", extra = ["cpu"], marker = "sys_platform == 'linux'" },
     { name = "mlx-audio", extra = ["tts"] },
     { name = "mlx-lm" },
     { name = "modelscope" },
@@ -272,6 +276,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "huggingface-hub", specifier = ">=0.30" },
     { name = "mlx", specifier = ">=0.29" },
+    { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = ">=0.29" },
     { name = "mlx-audio", extras = ["tts"], specifier = ">=0.5.0" },
     { name = "mlx-lm", specifier = ">=0.31.1" },
     { name = "modelscope", specifier = ">=1.20.0" },
@@ -1199,6 +1204,11 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f2/ef/ea528d5f51c7cf072f3bdda60d654d94364bb405bd31e566687bebd7b899/mlx-0.32.2-cp314-cp314t-win_arm64.whl", hash = "sha256:b4e34c337403e788900dea304453b52760134716ce7ef9fef4553ffe6c6c456b", size = 638733, upload-time = "2026-08-25T10:32:39.192Z" },
 ]
 
+[package.optional-dependencies]
+cpu = [
+    { name = "mlx-cpu" },
+]
+
 [[package]]
 name = "mlx-audio"
 version = "0.5.0"
@@ -1222,6 +1232,15 @@ wheels = [
 tts = [
     { name = "mistral-common", extra = ["audio"] },
     { name = "sentencepiece" },
+]
+
+[[package]]
+name = "mlx-cpu"
+version = "0.32.2"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/56/fa/4a37da905a3ea27bd5c041a26d8a5a58a35fb540b4c4de5a69c5e0173e29/mlx_cpu-0.32.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:d0f94625588b51a878786dd51cec5617894ce586cf3c94645ce1b64e24c27c0b", size = 8822016, upload-time = "2026-08-25T10:31:05.912Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/3c/8b/2305637be752d0827594de266eaee3d282f780ba7877c0e15881cdf9da5e/mlx_cpu-0.32.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:fc5d31b90fc4f457b2f9614ed45651a567d22a6a11a03d114a90a4e10bdd8878", size = 10388414, upload-time = "2026-08-25T10:31:08.632Z" },
 ]
 
 [[package]]

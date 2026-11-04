@@ -28,6 +28,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "huggingface-hub>=0.30",
     "mlx>=0.29",
+    "mlx[cpu]>=0.29 ; sys_platform == 'linux'",
 ]
 
 # ─── 命令行入口 (经 `uv run audioclone-webui` 等调用) ───────────
