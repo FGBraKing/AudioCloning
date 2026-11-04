@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import mlx.core as mx
 import numpy as np
 import pytest
 
@@ -32,6 +31,8 @@ class _FakeSenseVoiceModel:
         }
 
     def _extract_features(self, audio):
+        import mlx.core as mx  # 惰性导入
+
         return mx.zeros((100, 80))  # fbank 形状占位 [time, n_mels]
 
     def __call__(self, feats, language="auto", use_itn=False):

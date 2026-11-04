@@ -58,3 +58,26 @@ def asr_ready() -> bool:
             "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17）"
         )
     return ASRService(backend).is_model_available
+
+@pytest.fixture(autouse=True)
+def _assume_probes_available(monkeypatch):
+    """单元测试统一假设各后端依赖探测为可用（真实安装与否不影响逻辑测试）。
+
+    各"依赖缺失"专项用例会在自身作用域内覆盖为 False（后设置优先），
+    集成测试缺模型时仍按各自 skip 逻辑跳过。
+    """
+    probes = (
+        "audioclone.core.backends.qwen3_tts_mlx.has_qwen3_tts_support",
+        "audioclone.core.backends.qwen3_asr_mlx.has_qwen3_asr_support",
+        "audioclone.core.backends.chatterbox_mlx.has_chatterbox_support",
+        "audioclone.core.backends.spark_mlx.has_spark_support",
+        "audioclone.core.backends.minimax_music_mlx.has_minimax_music_support",
+        "audioclone.core.backends.deepfilternet_mlx.has_deepfilternet_support",
+        "audioclone.core.backends.sherpa_asr_onnx.has_sherpa_onnx_support",
+        "audioclone.core.backends.sherpa_tts_onnx.has_sherpa_onnx_support",
+        "audioclone.core.backends.sherpa_vad_onnx.has_sherpa_onnx_support",
+        "audioclone.core.backends.sherpa_cls_onnx.has_sherpa_onnx_support",
+        "audioclone.core.backends.sherpa_denoise_onnx.has_sherpa_onnx_support",
+    )
+    for probe in probes:
+        monkeypatch.setattr(probe, lambda: True)

@@ -7,8 +7,9 @@ on:
 
 jobs:
   quality:
-    name: lint & type & test
-    runs-on: macos-latest
+    name: lint & type & test (ubuntu)
+    # 主质量门禁跑 ubuntu：容量充足；测试已平台无关（依赖探测与平台假设均打桩）
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -36,3 +37,23 @@ jobs:
       # 基准脚本冒烟：dummy-omni 快速验证工具链可用
       - name: Benchmark smoke (dummy-omni)
         run: uv run python -m tools.benchmark --backend dummy-omni --iterations 1
+
+  macos-smoke:
+    name: MLX smoke (macOS, non-blocking)
+    # macOS arm64 托管 runner 常有容量限制（排队数分钟甚至无法分配），
+    # 降级为辅助检查：失败不阻塞 CI，但保留 MLX 真实导入面的信号
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.13"
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Unit tests (MLX 真实安装口径)
+        run: uv run pytest -m "not integration" -q --no-cov
