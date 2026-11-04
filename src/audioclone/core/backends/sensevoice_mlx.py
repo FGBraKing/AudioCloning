@@ -100,9 +100,8 @@ class SenseVoiceMLXBackend(ModelBackend, AudioClassificationCapability):
         if self._model is None:
             raise ModelLoadError("SenseVoice 模型未加载")
 
-        from mlx_audio.stt.utils import load_audio
-
         import mlx.core as mx  # 惰性导入：非 mac 平台不安装 mlx 也能加载本模块
+        from mlx_audio.stt.utils import load_audio
 
         audio_data = load_audio(str(audio_path), sr=self.sample_rate)
         feats = self._model._extract_features(mx.array(np.asarray(audio_data, dtype=np.float32)))
